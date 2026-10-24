@@ -35,6 +35,20 @@ pcall(function()
     if bv then bv:Destroy() end
 end)
 
+-- Limpeza de execuções anteriores (reexecutar não pode travar)
+pcall(function() if G.SpectralHubUI then G.SpectralHubUI:Destroy() end end)
+pcall(function()
+    local roots = { player:FindFirstChild("PlayerGui") }
+    pcall(function() table.insert(roots, game:GetService("CoreGui")) end)
+    pcall(function() if gethui then table.insert(roots, gethui()) end end)
+    for _, root in ipairs(roots) do
+        for _, g in ipairs(root:GetChildren()) do
+            if g.Name == "Rayfield" or g.Name == "Rayfield-Old" then pcall(function() g:Destroy() end) end
+        end
+    end
+end)
+G.SpectralHubUI = nil
+
 -- UI -------------------------------------------------------
 local Rayfield
 for _, url in ipairs({
@@ -2664,5 +2678,5 @@ end)
 print("[SpectralHub] 5 - pronto!")
 end
 
-local ok, err = pcall(main)
+local ok, err = xpcall(main, function(e) return tostring(e) .. "\n" .. debug.traceback() end)
 if not ok then warn("[SpectralHub] ERRO FATAL:", err) end
