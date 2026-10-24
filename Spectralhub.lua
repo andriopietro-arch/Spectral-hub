@@ -1,11 +1,11 @@
 --[[
     SpectralHub v7.4
     - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
-    - Auto treinar raça: farma osso no ponto de farm -> V4 ativa: espera no ponto alto -> V4 acabou:
+    - Auto treinar raca: farma osso no ponto de farm -> V4 ativa: espera no ponto alto -> V4 acabou:
       tenta comprar upgrade e volta a farmar (sem raid/fragmentos)
-    - Auto farm osso / treino: ao ligar vão primeiro para o ponto de farm (-9517, 142, 5543)
-    - Raid: não puxa/trava mais os NPCs (dessincronizava com o servidor)
-    - Iniciar raid: puxa Map["Boat Castle"].MapTeleportA.Hitbox para o personagem antes de clicar no botão
+    - Auto farm osso / treino: ao ligar vao primeiro para o ponto de farm (-9517, 142, 5543)
+    - Raid: nao puxa/trava mais os NPCs (dessincronizava com o servidor)
+    - Iniciar raid: puxa Map["Boat Castle"].MapTeleportA.Hitbox para o personagem antes de clicar no botao
 ]]
 
 pcall(function() (getgenv and getgenv() or _G).SpectralHubLoaded = game.JobId end)
@@ -23,19 +23,17 @@ local VIM = game:GetService("VirtualInputManager")
 local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 
--- Cada execução ganha um número; instâncias antigas encerram seus loops sozinhas
 local G = (getgenv and getgenv()) or _G
 G.SpectralHubGen = (G.SpectralHubGen or 0) + 1
 local myGen = G.SpectralHubGen
 local function Alive() return G.SpectralHubGen == myGen end
-print("[SpectralHub] execução número", myGen)
+print("[SpectralHub] execu\u{E7}\u{E3}o n\u{FA}mero", myGen)
 pcall(function()
     local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     local bv = r and r:FindFirstChild("SpectralHold")
     if bv then bv:Destroy() end
 end)
 
--- Limpeza de execuções anteriores (reexecutar não pode travar)
 pcall(function() if G.SpectralHubUI then G.SpectralHubUI:Destroy() end end)
 pcall(function()
     local roots = { player:FindFirstChild("PlayerGui") }
@@ -49,7 +47,6 @@ pcall(function()
 end)
 G.SpectralHubUI = nil
 
--- UI -------------------------------------------------------
 local Rayfield
 for _, url in ipairs({
     "https://sirius.menu/rayfield",
@@ -59,7 +56,7 @@ for _, url in ipairs({
     if ok and res then Rayfield = res break end
     warn("[SpectralHub] falha no Rayfield:", url, res)
 end
-if not Rayfield then warn("[SpectralHub] ERRO: Rayfield não carregou") return end
+if not Rayfield then warn("[SpectralHub] ERRO: Rayfield n\u{E3}o carregou") return end
 pcall(function() if G.SpectralHubUI and G.SpectralHubUI ~= Rayfield then G.SpectralHubUI:Destroy() end end)
 G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
@@ -71,7 +68,6 @@ local Window = Rayfield:CreateWindow({
 
 print("[SpectralHub] 3 - abas criadas")
 
--- CONFIG ---------------------------------------------------
 local WEST = Vector3.new(-1, 0, 0)
 local FLY_HEIGHT, FLY_SPEED, PIVOT_ASSIST = 25, 200, 0.8
 local SWORD_TOOLTIP, SWORD_NAME = "Sword", "Cursed Dual Katana"
@@ -128,11 +124,10 @@ local TrainUI = {}
 local CHIP_NAME = "Ice"
 local ClearESP
 
--- Estado do "Auto treinar raça" (controlado pelo orquestrador lá embaixo)
 local TS = { farm = false, waiting = false }
 local FARM_POS = Vector3.new(-9517, 142, 5543)    -- ponto de farm do osso
 local WAIT_POS = Vector3.new(-9523, 3933, 6727)   -- onde espera a V4 acabar
-local TP_DISTANCE = 750                           -- voa até faltar 750 studs, aí teleporta para o destino
+local TP_DISTANCE = 750                           -- voa ate faltar 750 studs, ai teleporta para o destino
 
 local HttpService = game:GetService("HttpService")
 local CONFIG_FILE = "SpectralHub_config.json"
@@ -210,7 +205,7 @@ pcall(function()
         LoadFlags(ESPFlags, d.ESP)
         LoadFlags(FarmFlags, d.Farm)
         LoadFlags(AutoFlags, d.Auto)
-        if type(d.FarmMode) == "string" and table.find({"Príncipe do bolo", "Osso", "Level"}, d.FarmMode) then
+        if type(d.FarmMode) == "string" and table.find({"Pr\u{ED}ncipe do bolo", "Osso", "Level"}, d.FarmMode) then
             FarmMode = d.FarmMode
         end
     end
@@ -218,7 +213,6 @@ end)
 
 local function anyTrue(t) for _, v in pairs(t) do if v then return true end end return false end
 
--- Helpers de "quem está ligado" (misturam as opções do usuário com o Auto treinar raça)
 local function RaceBusy() return RaceFlags.Door or RaceFlags.Trial or RaceFlags.KillPlayers end
 local function WantRaidDone() return FruitFlags.RaidDone end
 local function FarmActive()
@@ -226,7 +220,6 @@ local function FarmActive()
     return FarmFlags.Run and FarmMode == "Osso"
 end
 
--- Acesso preguiçoso ----------------------------------------
 local function Enemies() return WS:FindFirstChild("Enemies") end
 local function Remote(path)
     local cur = RS
@@ -253,7 +246,6 @@ local function NotifyNow(msg, dur)
     pcall(function() Rayfield:Notify({ Title = "Spectral Hub", Content = msg, Duration = dur or 4 }) end)
 end
 
--- Auto entrar no time (Marines) + Auto Buso -----------------
 do
     local function HasTeam()
         local t = player.Team
@@ -293,7 +285,6 @@ do
     end)
 end
 
--- Auto executar --------------------------------------------
 local AUTO_FILE, SCRIPT_FILE = "SpectralHub_auto.txt", "SpectralHub.lua"
 local AUTO_DIRS = { "../autoexec/", "../Autoexec/", "../autoexecute/", "../Autoexecute/", "../AutoExecute/", "autoexec/" }
 local AutoExec = false
@@ -333,42 +324,40 @@ local function SetupAutoExec(enable, silent)
         "| queue_on_teleport =", queued, "| pastas autoexec gravadas =", table.concat(wrote, " "))
     if silent then return end
     NotifyNow(string.format("SpectralHub.lua no workspace: %s | trocar de servidor: %s | ao entrar no jogo: %s",
-        hasScript and "sim" or "NÃO (salve o script com esse nome)",
-        queued and "ok" or "indisponível",
-        #wrote > 0 and ("ok (" .. #wrote .. " pasta)") or "sem pasta autoexec acessível"), 12)
+        hasScript and "sim" or "N\u{C3}O (salve o script com esse nome)",
+        queued and "ok" or "indispon\u{ED}vel",
+        #wrote > 0 and ("ok (" .. #wrote .. " pasta)") or "sem pasta autoexec acess\u{ED}vel"), 12)
 end
 if AutoExec then task.spawn(SetupAutoExec, true, true) end
 
 local mState, toggleAll, CleanBoatMovers, StatsUI = nil, nil, nil, {}
--- UI: Auto Farm --------------------------------------------
 do
--- Abas criadas na ORDEM desejada, cada uma com um ícone (Lucide). Se o ícone não existir, usa o padrão.
 local function MakeTab(name, icon)
     local ok, t = pcall(function() return Window:CreateTab(name, icon) end)
     if ok and t then return t end
     return Window:CreateTab(name, 4483362458)
 end
-local TabFarm  = MakeTab("Auto Farm",         "warehouse")  -- celeiro/armazém
+local TabFarm  = MakeTab("Auto Farm",         "warehouse")  -- celeiro/armazem
 local TabFruit = MakeTab("Fruta e Raid",      "apple")
-local TabRace  = MakeTab("Raça V4 / Miragem", "dna")
+local TabRace  = MakeTab("Ra\u{E7}a V4 / Miragem", "dna")
 local TabSea   = MakeTab("Sea Event",         "waves")
 local TabESP   = MakeTab("ESP",               "eye")
 local TabStats = MakeTab("Stats do servidor", "bar-chart-3")
-local TabCfg   = MakeTab("Configurações",     "settings")
-TabFarm:CreateSection("Missão")
+local TabCfg   = MakeTab("Configura\u{E7}\u{F5}es",     "settings")
+TabFarm:CreateSection("Miss\u{E3}o")
 TabFarm:CreateDropdown({
-    Name = "Escolher missão", Options = {"Príncipe do bolo", "Osso", "Level"},
+    Name = "Escolher miss\u{E3}o", Options = {"Pr\u{ED}ncipe do bolo", "Osso", "Level"},
     CurrentOption = {FarmMode}, MultipleOptions = false,
     Callback = function(o)
         local v = (type(o) == "table" and o[1]) or o
-        if table.find({"Príncipe do bolo", "Osso", "Level"}, v) then FarmMode = v end
+        if table.find({"Pr\u{ED}ncipe do bolo", "Osso", "Level"}, v) then FarmMode = v end
     end,
 })
 FarmUI.Toggle = TabFarm:CreateToggle({
     Name = "Iniciar farm", CurrentValue = FarmFlags.Run,
     Callback = function(v)
         if v and FarmMode ~= "Osso" then
-            NotifyNow(FarmMode .. " ainda não está disponível. Por enquanto só o Osso funciona.")
+            NotifyNow(FarmMode .. " ainda n\u{E3}o est\u{E1} dispon\u{ED}vel. Por enquanto s\u{F3} o Osso funciona.")
             FarmFlags.Run = false
             if FarmUI.Toggle then FarmUI.Toggle:Set(false) end
             return
@@ -381,14 +370,13 @@ TabFarm:CreateToggle({
     Callback = function(v) FarmFlags.Buy = v end,
 })
 
--- UI: Fruta e Raid ----------------------------------------
 TabFruit:CreateSection("Frutas")
 TabFruit:CreateToggle({ Name = "Auto coletar fruta", CurrentValue = FruitFlags.Collect, Callback = function(v) FruitFlags.Collect = v end })
 TabFruit:CreateToggle({ Name = "Auto armazenar", CurrentValue = FruitFlags.Store, Callback = function(v) FruitFlags.Store = v end })
 if not pcall(function() TabFruit:CreateDivider() end) then TabFruit:CreateLabel(" ") end
 TabFruit:CreateSection("Raid")
 TabFruit:CreateToggle({ Name = "Auto comprar chip", CurrentValue = FruitFlags.Chip, Callback = function(v) FruitFlags.Chip = v end })
-TabFruit:CreateToggle({ Name = "Auto começar raid", CurrentValue = FruitFlags.Raid, Callback = function(v) FruitFlags.Raid = v end })
+TabFruit:CreateToggle({ Name = "Auto come\u{E7}ar raid", CurrentValue = FruitFlags.Raid, Callback = function(v) FruitFlags.Raid = v end })
 TabFruit:CreateToggle({
     Name = "Auto completar raid", CurrentValue = FruitFlags.RaidDone,
     Callback = function(v)
@@ -397,38 +385,36 @@ TabFruit:CreateToggle({
     end,
 })
 
--- UI: Raça / Miragem ---------------------------------------
 mState = { visited = {}, dwell = 0, v3Night = false, lookFrames = 0, camLocked = false }
-TabRace:CreateSection("Raça V4")
+TabRace:CreateSection("Ra\u{E7}a V4")
 TrainUI.Status = TabRace:CreateLabel("Treino: desligado")
 TabRace:CreateToggle({
-    Name = "Auto treinar raça (osso → V4 → esperar)", CurrentValue = RaceFlags.Train,
+    Name = "Auto treinar ra\u{E7}a (osso \u{2192} V4 \u{2192} esperar)", CurrentValue = RaceFlags.Train,
     Callback = function(v) RaceFlags.Train = v end,
 })
-TabRace:CreateToggle({ Name = "Ir até a porta da raça", CurrentValue = RaceFlags.Door, Callback = function(v) RaceFlags.Door = v end })
+TabRace:CreateToggle({ Name = "Ir at\u{E9} a porta da ra\u{E7}a", CurrentValue = RaceFlags.Door, Callback = function(v) RaceFlags.Door = v end })
 TabRace:CreateToggle({ Name = "Auto completar trial", CurrentValue = RaceFlags.Trial, Callback = function(v) RaceFlags.Trial = v end })
 TabRace:CreateToggle({ Name = "Auto kill player da trial", CurrentValue = RaceFlags.KillPlayers, Callback = function(v) RaceFlags.KillPlayers = v end })
 TabRace:CreateSection("Miragem")
 toggleAll = TabRace:CreateToggle({
-    Name = "Auto Miragem (tudo em sequência)", CurrentValue = MirageFlags.All,
+    Name = "Auto Miragem (tudo em sequ\u{EA}ncia)", CurrentValue = MirageFlags.All,
     Callback = function(v)
         MirageFlags.All = v
         if v then mState.visited = {}; mState.v3Night = false; mState.dwell = 0 end
     end,
 })
 TabRace:CreateToggle({ Name = "Achar Miragem (navegando de barco)", CurrentValue = MirageFlags.Find, Callback = function(v) MirageFlags.Find = v end })
-TabRace:CreateToggle({ Name = "Ir até NPC avançado", CurrentValue = MirageFlags.Npc, Callback = function(v) MirageFlags.Npc = v end })
+TabRace:CreateToggle({ Name = "Ir at\u{E9} NPC avan\u{E7}ado", CurrentValue = MirageFlags.Npc, Callback = function(v) MirageFlags.Npc = v end })
 TabRace:CreateToggle({
-    Name = "Pegar baús", CurrentValue = MirageFlags.Chests,
+    Name = "Pegar ba\u{FA}s", CurrentValue = MirageFlags.Chests,
     Callback = function(v) MirageFlags.Chests = v if v then mState.visited = {}; mState.dwell = 0 end end,
 })
 TabRace:CreateToggle({ Name = "Ir para o ponto mais alto", CurrentValue = MirageFlags.High, Callback = function(v) MirageFlags.High = v end })
 TabRace:CreateToggle({
-    Name = "Olhar para a lua e ativar V3 (só de noite)", CurrentValue = MirageFlags.Moon,
+    Name = "Olhar para a lua e ativar V3 (s\u{F3} de noite)", CurrentValue = MirageFlags.Moon,
     Callback = function(v) MirageFlags.Moon = v if v then mState.v3Night = false; mState.lookFrames = 0 end end,
 })
 
--- UI: Sea Event --------------------------------------------
 TabSea:CreateToggle({ Name = "Select Shark", CurrentValue = SelectedShark, Callback = function(v) SelectedShark = v end })
 TabSea:CreateToggle({ Name = "Select Terror Shark", CurrentValue = SelectedTerror, Callback = function(v) SelectedTerror = v end })
 TabSea:CreateDropdown({
@@ -445,7 +431,6 @@ TabSea:CreateToggle({
     end,
 })
 
--- UI: ESP --------------------------------------------------
 TabESP:CreateToggle({
     Name = "ESP fruta", CurrentValue = ESPFlags.Fruit,
     Callback = function(v) ESPFlags.Fruit = v if not v and ClearESP then ClearESP("Fruit") end end,
@@ -455,13 +440,11 @@ TabESP:CreateToggle({
     Callback = function(v) ESPFlags.Player = v if not v and ClearESP then ClearESP("Player") end end,
 })
 
--- UI: Stats do servidor ------------------------------------
 TabStats:CreateSection("Servidor")
-StatsUI.Fruit = TabStats:CreateLabel("Fruta spawnada: 🔴")
-StatsUI.Mirage = TabStats:CreateLabel("Ilha da miragem: 🔴")
-StatsUI.Moon = TabStats:CreateLabel("Luas até a lua cheia: ...")
+StatsUI.Fruit = TabStats:CreateLabel("Fruta spawnada: \u{1F534}")
+StatsUI.Mirage = TabStats:CreateLabel("Ilha da miragem: \u{1F534}")
+StatsUI.Moon = TabStats:CreateLabel("Luas at\u{E9} a lua cheia: ...")
 
--- UI: Configurações ----------------------------------------
 TabCfg:CreateSection("Combate")
 TabCfg:CreateToggle({
     Name = "Fast Attack / Kill Aura", CurrentValue = FastAttackUser,
@@ -490,17 +473,17 @@ TabCfg:CreateSlider({
     CurrentValue = math.clamp(RACE_HEIGHT, 0, 100),
     Callback = function(v) RACE_HEIGHT = v end,
 })
-TabCfg:CreateSection("Raça")
+TabCfg:CreateSection("Ra\u{E7}a")
 TabCfg:CreateToggle({
-    Name = "Auto raça V4 (ativar sozinho)", CurrentValue = FarmFlags.V4,
+    Name = "Auto ra\u{E7}a V4 (ativar sozinho)", CurrentValue = FarmFlags.V4,
     Callback = function(v) FarmFlags.V4 = v end,
 })
 TabCfg:CreateSection("Movimento")
 TabCfg:CreateToggle({
-    Name = "Andar na água", CurrentValue = WaterWalk,
+    Name = "Andar na \u{E1}gua", CurrentValue = WaterWalk,
     Callback = function(v) WaterWalk = v end,
 })
-TabCfg:CreateSection("Automático")
+TabCfg:CreateSection("Autom\u{E1}tico")
 TabCfg:CreateToggle({
     Name = "Auto entrar no time Marines", CurrentValue = AutoFlags.Team,
     Callback = function(v) AutoFlags.Team = v end,
@@ -509,9 +492,9 @@ TabCfg:CreateToggle({
     Name = "Auto ativar Buso (Haki)", CurrentValue = AutoFlags.Buso,
     Callback = function(v) AutoFlags.Buso = v end,
 })
-TabCfg:CreateSection("Notificações")
+TabCfg:CreateSection("Notifica\u{E7}\u{F5}es")
 TabCfg:CreateToggle({
-    Name = "Desativar notificações", CurrentValue = NotifyOff,
+    Name = "Desativar notifica\u{E7}\u{F5}es", CurrentValue = NotifyOff,
     Callback = function(v) NotifyOff = v end,
 })
 TabCfg:CreateSection("Sistema")
@@ -527,21 +510,20 @@ TabCfg:CreateButton({
 })
 TabCfg:CreateSection("Salvar")
 TabCfg:CreateButton({
-    Name = "Salvar configurações",
+    Name = "Salvar configura\u{E7}\u{F5}es",
     Callback = function()
         if SaveSettings() then
-            print("[SpectralHub] Configurações salvas")
-            NotifyNow("Configurações salvas!")
+            print("[SpectralHub] Configura\u{E7}\u{F5}es salvas")
+            NotifyNow("Configura\u{E7}\u{F5}es salvas!")
         else
-            print("[SpectralHub] Não foi possível salvar")
-            NotifyNow("Não foi possível salvar (executor sem writefile).")
+            print("[SpectralHub] N\u{E3}o foi poss\u{ED}vel salvar")
+            NotifyNow("N\u{E3}o foi poss\u{ED}vel salvar (executor sem writefile).")
         end
     end,
 })
 print("[SpectralHub] 4 - toggles criados")
 
 end
--- FUNÇÕES --------------------------------------------------
 local function IsAlive(e)
     local folder = Enemies()
     if e and folder and e.Parent == folder then
@@ -594,7 +576,6 @@ local function EnemiesInRange(origin, radius)
     return out
 end
 
--- Fast Attack / Kill Aura
 task.spawn(function()
     while Alive() do
         if FastAttackUser or AutoCombatForce then
@@ -713,7 +694,6 @@ local function SitOnSeat(seat, hum)
     pcall(function() seat:Sit(hum) end)
 end
 
--- Anti-tremedeira: segura o player parado no ar e trava os NPCs no lugar ---
 local holdOn = false
 local function HoldPlayer(root)
     if not root then return end
@@ -738,7 +718,6 @@ end
 local pinned = setmetatable({}, { __mode = "k" })
 local function FreezeEnemy(model, hrp, at)
     if not model or not hrp then return end
-    -- Só mexe no NPC se eu controlo a física dele; senão o servidor não vê e dá dessincronia
     local owned = false
     if isnetworkowner then
         local ok, res = pcall(isnetworkowner, hrp)
@@ -869,7 +848,6 @@ local function SailStep(hum, root, dt, boat)
     RigidBoatFly(boat, seat, Vector3.new(pos.X, FLY_HEIGHT, pos.Z) + westDir * 1000, FLY_SPEED, dt)
 end
 
--- Noclip Otimizado -----------------------------------------
 do
 local noclipParts = {}
 local lastNoclipRebuild, lastBoatForNoclip = 0, nil
@@ -918,7 +896,6 @@ charConn = player.CharacterAdded:Connect(function()
 end)
 
 end
--- Miragem --------------------------------------------------
 local function InstPos(i)
     if not i then return nil end
     if i:IsA("BasePart") then return i.Position end
@@ -963,7 +940,7 @@ end
 local function ActivateV3()
     pcall(function()
         local ce = CommE()
-        if ce then ce:FireServer("ActivateAbility") else warn("[SpectralHub] CommE não encontrado") end
+        if ce then ce:FireServer("ActivateAbility") else warn("[SpectralHub] CommE n\u{E3}o encontrado") end
     end)
 end
 
@@ -989,20 +966,20 @@ Steps.Find = function(root, dt, hold, hum)
 end
 Steps.Npc = function(root, dt)
     local isl = GetMirage()
-    if not isl then Notify("Miragem não encontrada.") return false end
+    if not isl then Notify("Miragem n\u{E3}o encontrada.") return false end
     local f = isl:FindFirstChild("npcspawn")
     local kids = f and f:GetChildren() or {}
     local pos = InstPos(kids[MIRAGE_NPC_INDEX] or kids[#kids])
-    if not pos then Notify("NPC avançado não encontrado.") return false end
+    if not pos then Notify("NPC avan\u{E7}ado n\u{E3}o encontrado.") return false end
     local goal = pos + Vector3.new(0, 3, 0)
     FlyTo(goal, dt, MIRAGE_SPEED)
     return (root.Position - goal).Magnitude < 12
 end
 Steps.Chests = function(root, dt)
     local isl = GetMirage()
-    if not isl then Notify("Miragem não encontrada.") return false end
+    if not isl then Notify("Miragem n\u{E3}o encontrada.") return false end
     local f = isl:FindFirstChild("Chests")
-    if not f then Notify("Pasta Chests não encontrada.") return false end
+    if not f then Notify("Pasta Chests n\u{E3}o encontrada.") return false end
     local best, bp, bd
     for _, c in ipairs(f:GetChildren()) do
         if not mState.visited[c] then
@@ -1027,9 +1004,9 @@ Steps.Chests = function(root, dt)
 end
 Steps.High = function(root, dt)
     local isl = GetMirage()
-    if not isl then Notify("Miragem não encontrada.") return false end
+    if not isl then Notify("Miragem n\u{E3}o encontrada.") return false end
     local pos = GetHighest(isl)
-    if not pos then Notify("Ponto mais alto não encontrado.") return false end
+    if not pos then Notify("Ponto mais alto n\u{E3}o encontrado.") return false end
     FlyTo(pos, dt, MIRAGE_SPEED)
     return (root.Position - pos).Magnitude < 6
 end
@@ -1099,7 +1076,7 @@ task.spawn(function()
                 if MirageFlags.All and done then
                     if idx >= #order then
                         MirageFlags.All = false
-                        Notify("Sequência da Miragem concluída!")
+                        Notify("Sequ\u{EA}ncia da Miragem conclu\u{ED}da!")
                         if toggleAll then toggleAll:Set(false) end
                     else idx += 1; mState.dwell = 0 end
                 end
@@ -1112,7 +1089,6 @@ task.spawn(function()
     end
 end)
 
--- Hitbox do Boat Castle ------------------------------------
 local function FindCastleHitbox()
     local map = WS:FindFirstChild("Map")
     local castle = (map and map:FindFirstChild("Boat Castle")) or WS:FindFirstChild("Boat Castle", true)
@@ -1137,7 +1113,7 @@ end)
 UseCastleHitbox = function()
     if hitboxBusy then return end
     if not TREE_NPC_POS then
-        NotifyNow("Salve primeiro a posição do NPC (botão acima).")
+        NotifyNow("Salve primeiro a posi\u{E7}\u{E3}o do NPC (bot\u{E3}o acima).")
         return
     end
     local root = MyRoot()
@@ -1156,14 +1132,14 @@ UseCastleHitbox = function()
         hitboxBusy = false
     end
     if not hb then
-        NotifyNow("Boat Castle não encontrado. Veja o console (F9).")
+        NotifyNow("Boat Castle n\u{E3}o encontrado. Veja o console (F9).")
         local map = WS:FindFirstChild("Map")
         local names = {}
         if map then
             for _, c in ipairs(map:GetChildren()) do table.insert(names, c.Name) end
         end
-        print("[SpectralHub] Boat Castle não achado. Filhos de Map:", table.concat(names, ", "))
-        print("[SpectralHub] Posição usada para carregar:", tostring(BOAT_CASTLE_POS))
+        print("[SpectralHub] Boat Castle n\u{E3}o achado. Filhos de Map:", table.concat(names, ", "))
+        print("[SpectralHub] Posi\u{E7}\u{E3}o usada para carregar:", tostring(BOAT_CASTLE_POS))
         return
     end
 
@@ -1184,7 +1160,7 @@ UseCastleHitbox = function()
             task.wait(0.1)
             firetouchinterest(root, hb, 1)
         else
-            warn("[SpectralHub] firetouchinterest não existe no seu executor")
+            warn("[SpectralHub] firetouchinterest n\u{E3}o existe no seu executor")
         end
         task.wait(1.5)
     end)
@@ -1197,7 +1173,6 @@ UseCastleHitbox = function()
     hitboxBusy = false
 end
 
--- Frutas / Raid --------------------------------------------
 local function IsFruitName(i) return i:IsA("Tool") and i.Name:find("Fruit") ~= nil end
 local function WorldFruits()
     local list = {}
@@ -1303,7 +1278,6 @@ task.spawn(function()
     end
 end)
 
--- Auto completar raid --------------------------------------
 do
 local islandCache = { t = 0, list = {} }
 
@@ -1488,7 +1462,7 @@ task.spawn(function()
                 if not box then
                     ReleaseHold()
                     current, hoverPos, nilFor, sawEnemy, emptyFor, RaidNoclip = nil, nil, 0, false, 0, false
-                    Notify("Aguardando você ser levado para a ilha da raid...")
+                    Notify("Aguardando voc\u{EA} ser levado para a ilha da raid...")
                     return
                 end
                 if not current or current.isl ~= box.isl then
@@ -1518,7 +1492,6 @@ task.spawn(function()
                         if en.d < bd then best, bd = en, en.d end
                     end
 
-                    -- NÃO mexe nos NPCs da raid (puxar/travar dessincroniza com o servidor)
                     FlyTo(best.hrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
                     HoldPlayer(root)
                     hoverPos = root.Position
@@ -1569,7 +1542,6 @@ task.spawn(function()
 end)
 
 end
--- Auto começar raid ----------------------------------------
 do
 local function GetRaidClick()
     local map = WS:FindFirstChild("Map")
@@ -1579,7 +1551,6 @@ local function GetRaidClick()
     local m = b and b:FindFirstChild("Main")
     return m and m:FindFirstChildOfClass("ClickDetector")
 end
--- Puxa a Hitbox (Map["Boat Castle"].MapTeleportA.Hitbox) para dentro do personagem
 local function RaidHitbox()
     local map = WS:FindFirstChild("Map")
     local castle = map and map:FindFirstChild("Boat Castle")
@@ -1604,7 +1575,7 @@ local function PullRaidHitbox()
         end
         hitboxBusy = false
     end
-    if not hb then Notify("Hitbox do Boat Castle não encontrada.") return end
+    if not hb then Notify("Hitbox do Boat Castle n\u{E3}o encontrada.") return end
     hitboxBusy = true
     local origCF, origTouch = hb.CFrame, hb.CanTouch
     pcall(function()
@@ -1645,7 +1616,7 @@ task.spawn(function()
                     end
                 end
                 lastClick = os.clock()
-                if not cd then Notify("Botão da raid não encontrado.") return end
+                if not cd then Notify("Bot\u{E3}o da raid n\u{E3}o encontrado.") return end
                 tries += 1
                 local part = cd.Parent
                 if tries > 1 and part and part:IsA("BasePart") then
@@ -1656,7 +1627,7 @@ task.spawn(function()
                     fireclickdetector(cd)
                     print("[SpectralHub] Clique na raid enviado")
                 else
-                    warn("[SpectralHub] fireclickdetector não existe no seu executor")
+                    warn("[SpectralHub] fireclickdetector n\u{E3}o existe no seu executor")
                 end
             end)
         end
@@ -1664,9 +1635,6 @@ task.spawn(function()
 end)
 
 end
--- Auto Farm: Osso ------------------------------------------
--- Target lock (só troca de alvo quando o atual morre), pega o MAIS PRÓXIMO,
--- NPCs travados no lugar, player preso no ar e missão iniciada SEM ir até o NPC.
 do
     local NPC_1 = Vector3.new(-9479.2168, 141.215088, 5566.09277)
     local NPC_2 = Vector3.new(-9516.9931640625, 172.01779174804688, 6078.46533203125)
@@ -1833,7 +1801,7 @@ do
                     local level = MyLevel()
                     local unlocked = UnlockedMobs(level)
                     if #unlocked == 0 then
-                        Notify("O farm de Osso precisa de nível 1975+ (seu nível: " .. level .. ").")
+                        Notify("O farm de Osso precisa de n\u{ED}vel 1975+ (seu n\u{ED}vel: " .. level .. ").")
                         return
                     end
 
@@ -1845,7 +1813,6 @@ do
                         end)
                     end
 
-                    -- Ao ligar o farm (ou voltar da espera da V4) vai primeiro ao ponto de farm
                     if not wasActive then wasActive, needGoFarm = true, true end
                     if needGoFarm then
                         FlyTo(FARM_POS, dt, MIRAGE_SPEED)
@@ -1859,24 +1826,20 @@ do
                     local qtext = QuestText()
                     if qtext ~= lastQText then
                         lastQText = qtext
-                        print("[SpectralHub] Texto da missão:", tostring(qtext))
+                        print("[SpectralHub] Texto da miss\u{E3}o:", tostring(qtext))
                     end
 
-                    -- 1) TARGET LOCK
                     local lockedAlive, lockedHrp = StillAlive(LockedTarget)
                     if lockedAlive then
                         EquipSword()
                         local base = lockedHrp.Position
 
-                        -- alvo principal fica parado no lugar
                         FreezeEnemy(LockedTarget, lockedHrp)
                         base = lockedHrp.Position
 
-                        -- player fica parado no ar em cima do alvo (sem tremer)
                         FlyTo(base + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
                         HoldPlayer(root)
 
-                        -- outros mobs desbloqueados próximos são puxados e ficam parados também
                         local nearby = AllUnlockedAlive(unlocked, qtext)
                         for _, m in ipairs(nearby) do
                             if m.model ~= LockedTarget and (m.hrp.Position - base).Magnitude <= BRING_RADIUS then
@@ -1921,7 +1884,6 @@ do
                     LockedTarget, LockedMob = nil, nil
                     ReleaseHold()
 
-                    -- 2) trava no inimigo desbloqueado vivo MAIS PRÓXIMO
                     local aliveList = AllUnlockedAlive(unlocked, qtext)
                     if #aliveList > 0 then
                         local best, bd = nil, math.huge
@@ -1933,19 +1895,17 @@ do
                             LockedTarget, LockedMob = best.model, best.mob
                             pinned[best.model] = nil
                             fails = 0
-                            print("[SpectralHub] Farm Osso: travando no alvo mais próximo ->", best.model.Name)
+                            print("[SpectralHub] Farm Osso: travando no alvo mais pr\u{F3}ximo ->", best.model.Name)
                         end
                         return
                     end
 
-                    -- 3) ninguém vivo: verifica se já existe missão ativa
                     local activeMob = nil
                     for _, m in ipairs(unlocked) do
                         if QuestActive(m) then activeMob = m break end
                     end
 
                     if not activeMob then
-                        -- Sem missão: pega uma remotamente (NÃO vai até o NPC)
                         if curMissionMob == nil or not table.find(unlocked, curMissionMob) then
                             missionIdx = ((missionIdx - 1) % #unlocked) + 1
                             curMissionMob = unlocked[missionIdx]
@@ -1977,8 +1937,8 @@ do
                                         if fails >= 2 then
                                             fails = 0
                                             curMissionMob = nil
-                                            Notify("Missão de " .. mob.name .. " não iniciou, tentando a próxima.")
-                                            print("[SpectralHub] Missão de", mob.name, "não confirmada: tentando próximo mob da rotação")
+                                            Notify("Miss\u{E3}o de " .. mob.name .. " n\u{E3}o iniciou, tentando a pr\u{F3}xima.")
+                                            print("[SpectralHub] Miss\u{E3}o de", mob.name, "n\u{E3}o confirmada: tentando pr\u{F3}ximo mob da rota\u{E7}\u{E3}o")
                                         end
                                     end
                                 end)
@@ -1988,7 +1948,6 @@ do
                         return
                     end
 
-                    -- Missão ativa: vai até os spawns esperar nascer
                     curMissionMob = activeMob
                     local spawns = SpawnPositions(activeMob, qtext)
                     if #spawns == 0 then spawns = { activeMob.area } end
@@ -2006,8 +1965,8 @@ do
 
                     if now - lastDbg >= 3 then
                         lastDbg = now
-                        print(string.format("[SpectralHub] Farm Osso: missão ativa = %s | esperando nascer", activeMob.name))
-                        print("[SpectralHub] Inimigos perto de você:", NearbyNames(root))
+                        print(string.format("[SpectralHub] Farm Osso: miss\u{E3}o ativa = %s | esperando nascer", activeMob.name))
+                        print("[SpectralHub] Inimigos perto de voc\u{EA}:", NearbyNames(root))
                     end
                 end)
                 if not ok then warn("[SpectralHub] erro no Auto Farm:", err) end
@@ -2020,7 +1979,6 @@ do
     end)
 end
 
--- Auto comprar osso ----------------------------------------
 task.spawn(function()
     local lastSig, lastPrint = nil, 0
     while Alive() do
@@ -2041,7 +1999,6 @@ task.spawn(function()
     end
 end)
 
--- Auto raça V4: ativa via RemoteFunction do Awakening ------
 task.spawn(function()
     local lastTry, tries, pauseUntil, lastPrint, lastScan = 0, 0, 0, 0, 0
     local missingSince, announced = nil, false
@@ -2097,7 +2054,7 @@ task.spawn(function()
         local char = player.Character
         local bp = player:FindFirstChild("Backpack")
         local awk = (char and char:FindFirstChild("Awakening")) or (bp and bp:FindFirstChild("Awakening"))
-        if not awk then return false, "Awakening não encontrado" end
+        if not awk then return false, "Awakening n\u{E3}o encontrado" end
 
         local rf = awk:FindFirstChild("RemoteFunction") or awk:FindFirstChildOfClass("RemoteFunction")
         if rf then
@@ -2111,7 +2068,7 @@ task.spawn(function()
             return ok, res
         end
 
-        return false, "RemoteFunction não encontrado em Awakening"
+        return false, "RemoteFunction n\u{E3}o encontrado em Awakening"
     end
 
     while Alive() do
@@ -2141,14 +2098,14 @@ task.spawn(function()
                 end
                 if blind and not announced then
                     announced = true
-                    Notify("Auto raça V4: medidor não detectado, tentando ativar via Awakening periodicamente.")
+                    Notify("Auto ra\u{E7}a V4: medidor n\u{E3}o detectado, tentando ativar via Awakening periodicamente.")
                 elseif found then
                     announced = false
                 end
 
                 if now - lastPrint > 5 then
                     lastPrint = now
-                    print("[SpectralHub] Auto raça V4: personagem =", tostring(vsrc), tostring(v),
+                    print("[SpectralHub] Auto ra\u{E7}a V4: personagem =", tostring(vsrc), tostring(v),
                         "| tela =", tostring(guiSrc), tostring(guiVal),
                         "| cheio =", full, "| sem medidor =", blind, "| transformado =", Transformed())
                 end
@@ -2161,7 +2118,7 @@ task.spawn(function()
                 if tries >= 6 then
                     tries = 0
                     pauseUntil = now + 15
-                    print("[SpectralHub] Auto raça V4: não transformou após 6 chamadas, aguardando 15s")
+                    print("[SpectralHub] Auto ra\u{E7}a V4: n\u{E3}o transformou ap\u{F3}s 6 chamadas, aguardando 15s")
                     return
                 end
 
@@ -2171,20 +2128,17 @@ task.spawn(function()
                     task.spawn(function()
                         local invoked, info = ActivateAwakeningRemote()
                         if not invoked then
-                            print("[SpectralHub] Auto raça V4 aviso:", tostring(info))
+                            print("[SpectralHub] Auto ra\u{E7}a V4 aviso:", tostring(info))
                         end
                     end)
                 end
             end)
-            if not ok then warn("[SpectralHub] erro no Auto raça V4:", err) end
+            if not ok then warn("[SpectralHub] erro no Auto ra\u{E7}a V4:", err) end
         end
     end
 end)
 
--- Auto treinar raça (orquestrador) -------------------------
 do
--- Ciclo: farma osso (no ponto de farm) -> V4 ativa: espera no ponto alto até acabar
---        -> V4 acabou: tenta comprar upgrade (se der) -> volta a farmar osso e repete.
 local lastTrainText
 local function SetTrainStatus(t)
     if lastTrainText == t then return end
@@ -2203,7 +2157,6 @@ local function TryUpgradeRace()
     return ok and (after < before or res == true)
 end
 
--- Espera no ponto alto enquanto a V4 está ativa
 task.spawn(function()
     local was = false
     while Alive() do
@@ -2237,12 +2190,12 @@ task.spawn(function()
                     wasOn = true
                     endedSince = nil
                     state = transformed and "v4" or "farm"
-                    print("[SpectralHub] Treino de raça iniciado no estado:", state)
+                    print("[SpectralHub] Treino de ra\u{E7}a iniciado no estado:", state)
                 end
 
                 if state == "farm" then
                     TS.farm, TS.waiting = true, false
-                    SetTrainStatus("Treino: farmando osso até ativar a V4...")
+                    SetTrainStatus("Treino: farmando osso at\u{E9} ativar a V4...")
                     if transformed then
                         state, endedSince = "v4", nil
                         print("[SpectralHub] Treino: V4 ativada, indo esperar no ponto alto")
@@ -2257,7 +2210,7 @@ task.spawn(function()
                         if os.clock() - endedSince >= 1.5 then
                             TS.waiting = false
                             SetTrainStatus("Treino: V4 acabou, checando upgrade...")
-                            if TryUpgradeRace() then NotifyNow("Upgrade da raça comprado!") end
+                            if TryUpgradeRace() then NotifyNow("Upgrade da ra\u{E7}a comprado!") end
                             state, endedSince = "farm", nil
                         end
                     end
@@ -2272,7 +2225,6 @@ task.spawn(function()
 end)
 
 end
--- Stats do servidor ----------------------------------------
 do
     local MIRAGE_DURATION = 600
     local MOON_PHASES = {
@@ -2301,7 +2253,7 @@ do
         while Alive() do
             task.wait(1)
             pcall(function()
-                setLabel("Fruit", "Fruta spawnada: " .. (#WorldFruits() > 0 and "🟢" or "🔴"))
+                setLabel("Fruit", "Fruta spawnada: " .. (#WorldFruits() > 0 and "\u{1F7E2}" or "\u{1F534}"))
 
                 if GetMirage() then
                     if not mirageFirst then
@@ -2309,10 +2261,10 @@ do
                         mirageEstimated = (os.clock() - scriptStart) < 10
                     end
                     local left = MIRAGE_DURATION - (os.clock() - mirageFirst)
-                    setLabel("Mirage", "Ilha da miragem: 🟢  |  some em " .. (mirageEstimated and "~" or "") .. fmt(left))
+                    setLabel("Mirage", "Ilha da miragem: \u{1F7E2}  |  some em " .. (mirageEstimated and "~" or "") .. fmt(left))
                 else
                     mirageFirst = nil
-                    setLabel("Mirage", "Ilha da miragem: 🔴")
+                    setLabel("Mirage", "Ilha da miragem: \u{1F534}")
                 end
 
                 local sky = Lighting:FindFirstChildOfClass("Sky")
@@ -2321,21 +2273,20 @@ do
                 local n = id and MOON_PHASES[id]
                 if id ~= lastMoonId then
                     lastMoonId = id
-                    print("[SpectralHub] Textura da lua:", tostring(id), "-> luas até a cheia:", tostring(n))
+                    print("[SpectralHub] Textura da lua:", tostring(id), "-> luas at\u{E9} a cheia:", tostring(n))
                 end
                 if n == nil then
-                    setLabel("Moon", "Luas até a lua cheia: lua falsa")
+                    setLabel("Moon", "Luas at\u{E9} a lua cheia: lua falsa")
                 elseif n == 0 then
-                    setLabel("Moon", "Luas até a lua cheia: 0 (lua cheia agora!)")
+                    setLabel("Moon", "Luas at\u{E9} a lua cheia: 0 (lua cheia agora!)")
                 else
-                    setLabel("Moon", "Luas até a lua cheia: " .. n)
+                    setLabel("Moon", "Luas at\u{E9} a lua cheia: " .. n)
                 end
             end)
         end
     end)
 end
 
--- Andar na água --------------------------------------------
 do
 local waterOrig = nil
 local function WaterPlane()
@@ -2348,7 +2299,7 @@ task.spawn(function()
         pcall(function()
             if WaterWalk then
                 local w = WaterPlane()
-                if not w then Notify("Plano da água (WaterBase-Plane) não encontrado.") return end
+                if not w then Notify("Plano da \u{E1}gua (WaterBase-Plane) n\u{E3}o encontrado.") return end
                 if not waterOrig or waterOrig.part ~= w then
                     waterOrig = { part = w, size = w.Size, collide = w.CanCollide }
                 end
@@ -2369,7 +2320,6 @@ task.spawn(function()
 end)
 
 end
--- ESP ------------------------------------------------------
 do
 local espCache = { Fruit = {}, Player = {} }
 local function DestroyRec(kind, key)
@@ -2453,7 +2403,6 @@ task.spawn(function()
 end)
 
 end
--- Raça (porta / trial / kill players) ----------------------
 do
 local lastTempleTp = 0
 
@@ -2519,7 +2468,7 @@ task.spawn(function()
                     local race = GetRaceName()
                     local pos = RACE_DOOR_POSITION or (race and DOOR_POS[race:lower()])
                     if not pos then
-                        Notify("Raça não reconhecida: " .. tostring(race))
+                        Notify("Ra\u{E7}a n\u{E3}o reconhecida: " .. tostring(race))
                         print("[SpectralHub] Data.Race =", race)
                         return
                     end
@@ -2553,13 +2502,12 @@ task.spawn(function()
                 end
                 ReleaseHold()
             end)
-            if not ok then warn("[SpectralHub] erro na Raça:", err) end
+            if not ok then warn("[SpectralHub] erro na Ra\u{E7}a:", err) end
         end
     end
 end)
 
 end
--- Sea Event ------------------------------------------------
 task.spawn(function()
     local track = {
         target = nil, lastHealth = 0, lastChange = 0, escapeUntil = 0, hitUntil = 0,
