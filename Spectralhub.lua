@@ -1,5 +1,7 @@
 --[[
-    SpectralHub v7.4
+    SpectralHub v7.5
+    - NOVO: Auto Pumpkin Hunt (aba Auto Farm): vai na abobora, clica dentro dela, vai para a proxima
+      quando some e mata o Jack o' Lantern quando spawnar
     - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
     - Auto treinar raca: farma osso no ponto de farm -> V4 ativa: espera no ponto alto -> V4 acabou:
       tenta comprar upgrade e volta a farmar (sem raid/fragmentos)
@@ -62,7 +64,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.4",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.5",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -116,7 +118,7 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false }
+local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false }
 local AutoFlags = { Team=true, Buso=true }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -216,6 +218,7 @@ local function anyTrue(t) for _, v in pairs(t) do if v then return true end end 
 local function RaceBusy() return RaceFlags.Door or RaceFlags.Trial or RaceFlags.KillPlayers end
 local function WantRaidDone() return FruitFlags.RaidDone end
 local function FarmActive()
+    if FarmFlags.Pumpkin then return false end
     if RaceFlags.Train then return TS.farm end
     return FarmFlags.Run and FarmMode == "Osso"
 end
@@ -368,6 +371,11 @@ FarmUI.Toggle = TabFarm:CreateToggle({
 TabFarm:CreateToggle({
     Name = "Auto comprar osso", CurrentValue = FarmFlags.Buy,
     Callback = function(v) FarmFlags.Buy = v end,
+})
+TabFarm:CreateSection("Evento")
+TabFarm:CreateToggle({
+    Name = "Auto Pumpkin Hunt (ab\u{F3}bora + Jack o' Lantern)", CurrentValue = FarmFlags.Pumpkin,
+    Callback = function(v) FarmFlags.Pumpkin = v end,
 })
 
 TabFruit:CreateSection("Frutas")
@@ -867,7 +875,7 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Pumpkin or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -2622,6 +2630,200 @@ task.spawn(function()
         end
     end
 end)
+
+-- ============================================================
+-- AUTO PUMPKIN HUNT
+-- ============================================================
+do
+    local function IsGone(p)
+        if not p or not p.Parent or not p:IsDescendantOf(WS) then return true end
+        if p:IsA("BasePart") and p.Transparency >= 1 then return true end
+        if p:IsA("Model") or p:IsA("Folder") then
+            local anyVisible = false
+            for _, d in ipairs(p:GetDescendants()) do
+                if d:IsA("BasePart") and d.Transparency < 1 then anyVisible = true break end
+            end
+            if not anyVisible then return true end
+        end
+        return false
+    end
+
+    -- abóboras que acabaram de sumir (ignoradas por 10s para não voltar nelas)
+    local recentlyGone = setmetatable({}, { __mode = "k" })
+    local GONE_IGNORE_TIME = 10
+
+    -- tenta primeiro o caminho informado; se nao achar, procura qualquer PumpkinV4*
+    local function FindPumpkins()
+        local list = {}
+        local folder = WS:FindFirstChild("PumpkinHunt")
+        if not folder then return list end
+        pcall(function()
+            local c = folder:GetChildren()[4]
+            local p = c and c:FindFirstChild("PumpkinV4.008")
+            if p and not IsGone(p) then table.insert(list, p) end
+        end)
+        for _, d in ipairs(folder:GetDescendants()) do
+            if d.Name:match("^PumpkinV4") and not IsGone(d) and not table.find(list, d) then
+                table.insert(list, d)
+            end
+        end
+        return list
+    end
+
+    local function FindJack()
+        local folder = Enemies()
+        local j = folder and folder:FindFirstChild("Jack o' Lantern")
+        if j then
+            local alive, hrp = IsAlive(j)
+            if alive then return j, hrp end
+        end
+        return nil
+    end
+
+    local function ClickScreen()
+        pcall(function()
+            local cam = WS.CurrentCamera
+            if not cam then return end
+            local x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end)
+    end
+
+    task.spawn(function()
+        local currentPumpkin = nil
+        local lastClick, lastHit, lastAct, lastDbg = 0, 0, 0, 0
+        local insideSince, insidePumpkin = nil, nil
+        local INSIDE_RESET_TIME = 6
+        local flyOnly = false -- depois de um reset: voa ate a abobora sem teleportar
+
+        local function FlyOnlyTo(pos, dt, speed)
+            local r = MyRoot() if not r then return end
+            local off = pos - r.Position
+            local d = off.Magnitude
+            if d > 1 then
+                r.CFrame = CFrame.new(r.Position + off.Unit * math.min(d, speed * dt)) * r.CFrame.Rotation
+            end
+            r.AssemblyLinearVelocity = Vector3.zero
+        end
+
+        while Alive() do
+            local dt = Run.Heartbeat:Wait()
+            if FarmFlags.Pumpkin and not StartSeaEvent and not anyTrue(MirageFlags)
+                and not RaceBusy() and not WantRaidDone() then
+                local ok, err = pcall(function()
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root then return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
+
+                    local now = os.clock()
+
+                    -- 1) PRIORIDADE: Jack o' Lantern spawnou -> vai matar
+                    local jack, jhrp = FindJack()
+                    if jack then
+                        insideSince, insidePumpkin = nil, nil
+                        EquipSword()
+                        FlyTo(jhrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
+                        if now - lastHit >= 0.05 then
+                            lastHit = now
+                            local d = (jhrp.Position - root.Position).Magnitude
+                            AttackList({ { model = jack, hrp = jhrp, d = d } })
+                        end
+                        if now - lastAct >= 0.25 then
+                            lastAct = now
+                            local tool = GetSword()
+                            if tool and tool.Parent == char then
+                                pcall(function() tool:Activate() end)
+                            end
+                        end
+                        if now - lastDbg >= 3 then
+                            lastDbg = now
+                            print("[SpectralHub] Pumpkin: matando Jack o' Lantern")
+                        end
+                        return
+                    end
+
+                    -- 2) ab\u{F3}bora atual sumiu -> escolhe a mais pr\u{F3}xima
+                    if IsGone(currentPumpkin) then
+                        if currentPumpkin then
+                            print("[SpectralHub] Pumpkin: ab\u{F3}bora sumiu, procurando a pr\u{F3}xima")
+                            flyOnly = false
+                            recentlyGone[currentPumpkin] = now
+                        end
+                        currentPumpkin = nil
+                        local best, bd
+                        for _, p in ipairs(FindPumpkins()) do
+                            local goneAt = recentlyGone[p]
+                            local pos = InstPos(p)
+                            if pos and not (goneAt and now - goneAt < GONE_IGNORE_TIME) then
+                                local d = (pos - root.Position).Magnitude
+                                if not bd or d < bd then best, bd = p, d end
+                            end
+                        end
+                        currentPumpkin = best
+                        if best then print("[SpectralHub] Pumpkin: indo para", best:GetFullName()) end
+                    end
+
+                    if not currentPumpkin then
+                        Notify("Nenhuma ab\u{F3}bora dispon\u{ED}vel, esperando spawnar...")
+                        return
+                    end
+
+                    -- 3) entra na ab\u{F3}bora, equipa a espada e clica
+                    local pos = InstPos(currentPumpkin)
+                    if not pos then return end
+                    EquipSword()
+                    if flyOnly then
+                        FlyOnlyTo(pos, dt, 300) -- voa de verdade, sem teleportar
+                    else
+                        FlyTo(pos, dt, 300) -- teleporta direto quando faltar <= TP_DISTANCE
+                    end
+                    TouchInst(currentPumpkin, root)
+
+                    if (root.Position - pos).Magnitude <= 15 then
+                        -- come\u{E7}a a contar o tempo dentro da mesma ab\u{F3}bora
+                        if insidePumpkin ~= currentPumpkin or not insideSince then
+                            insidePumpkin, insideSince = currentPumpkin, now
+                        end
+
+                        -- ficou mais de 4s e a ab\u{F3}bora n\u{E3}o sumiu: provavelmente n\u{E3}o est\u{E1} dentro de verdade
+                        if now - insideSince >= INSIDE_RESET_TIME then
+                            print("[SpectralHub] Pumpkin: mais de " .. INSIDE_RESET_TIME .. "s na ab\u{F3}bora sem ela sumir, resetando personagem")
+                            insideSince, insidePumpkin, currentPumpkin = nil, nil, nil
+                            flyOnly = true
+                            ReleaseHold()
+                            pcall(function() hum.Health = 0 end)
+                            return
+                        end
+
+                        if now - lastClick >= 0.1 then
+                            lastClick = now
+                            ClickScreen()
+                            local tool = GetSword()
+                            if tool and tool.Parent == char then
+                                pcall(function() tool:Activate() end)
+                            end
+                        end
+                    else
+                        insideSince, insidePumpkin = nil, nil
+                    end
+
+                    if now - lastDbg >= 3 then
+                        lastDbg = now
+                        print("[SpectralHub] Pumpkin: dentro da ab\u{F3}bora, clicando")
+                    end
+                end)
+                if not ok then warn("[SpectralHub] erro no Pumpkin Hunt:", err) end
+            else
+                currentPumpkin = nil
+                flyOnly = false
+                insideSince, insidePumpkin = nil, nil
+            end
+        end
+    end)
+end
 
 print("[SpectralHub] 5 - pronto!")
 end
