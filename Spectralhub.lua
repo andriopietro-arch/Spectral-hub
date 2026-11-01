@@ -119,7 +119,7 @@ local abandoned = setmetatable({}, { __mode = "k" })
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
 local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false }
-local AutoFlags = { Team=true, Buso=true }
+local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
 local TrainUI = {}
@@ -132,7 +132,8 @@ local WAIT_POS = Vector3.new(-9523, 3933, 6727)   -- onde espera a V4 acabar
 local TP_DISTANCE = 750                           -- voa ate faltar 750 studs, ai teleporta para o destino
 
 local HttpService = game:GetService("HttpService")
-local CONFIG_FILE = "SpectralHub_config.json"
+-- um arquivo por conta: conta nova (sem arquivo) começa com tudo desativado
+local CONFIG_FILE = "SpectralHub_config_" .. tostring(player.UserId) .. ".json"
 
 local TOOL_MAP = { ["Espada"] = "Sword", ["Arma"] = "Gun", ["Fruta"] = "Blox Fruit", ["Soco"] = "Melee" }
 local SelectedToolLabel = "Espada"
@@ -288,7 +289,7 @@ do
     end)
 end
 
-local AUTO_FILE, SCRIPT_FILE = "SpectralHub_auto.txt", "SpectralHub.lua"
+local AUTO_FILE, SCRIPT_FILE = "SpectralHub_auto_" .. tostring(player.UserId) .. ".txt", "SpectralHub.lua"
 local AUTO_DIRS = { "../autoexec/", "../Autoexec/", "../autoexecute/", "../Autoexecute/", "../AutoExecute/", "autoexec/" }
 local AutoExec = false
 pcall(function()
