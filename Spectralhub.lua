@@ -118,7 +118,8 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false }
+local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false, Halloween=false }
+local HW = { active = false, window = 20 }   -- active: evento rolando (farm normal pausa); window: minutos apos a hora cheia
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -161,6 +162,7 @@ local function SaveSettings()
             FarmHeight = RACE_HEIGHT,
             KillRange = KILL_AURA_RANGE,
             KillMax = KILL_AURA_MAX,
+            HalloweenWindow = HW.window,
             Tool = SelectedToolLabel,
             WaterWalk = WaterWalk,
             NoNotify = NotifyOff,
@@ -195,6 +197,7 @@ pcall(function()
         if type(d.FarmHeight) == "number" then RACE_HEIGHT = d.FarmHeight end
         if type(d.KillRange) == "number" then KILL_AURA_RANGE = math.clamp(d.KillRange, 30, 400) end
         if type(d.KillMax) == "number" then KILL_AURA_MAX = math.clamp(d.KillMax, 1, 20) end
+        if type(d.HalloweenWindow) == "number" then HW.window = math.clamp(d.HalloweenWindow, 5, 55) end
         if type(d.Tool) == "string" and TOOL_MAP[d.Tool] then SelectedToolLabel = d.Tool end
         if type(d.WaterWalk) == "boolean" then WaterWalk = d.WaterWalk end
         if type(d.NoNotify) == "boolean" then NotifyOff = d.NoNotify end
@@ -219,6 +222,7 @@ local function anyTrue(t) for _, v in pairs(t) do if v then return true end end 
 local function RaceBusy() return RaceFlags.Door or RaceFlags.Trial or RaceFlags.KillPlayers end
 local function WantRaidDone() return FruitFlags.RaidDone end
 local function FarmActive()
+    if HW.active then return false end
     if FarmFlags.Pumpkin then return false end
     if RaceFlags.Train then return TS.farm end
     return FarmFlags.Run and FarmMode == "Osso"
@@ -377,6 +381,14 @@ TabFarm:CreateSection("Evento")
 TabFarm:CreateToggle({
     Name = "Auto Pumpkin Hunt (ab\u{F3}bora + Jack o' Lantern)", CurrentValue = FarmFlags.Pumpkin,
     Callback = function(v) FarmFlags.Pumpkin = v end,
+})
+TabFarm:CreateToggle({
+    Name = "Auto Halloween (portas + boss Hellfire Gas)", CurrentValue = FarmFlags.Halloween,
+    Callback = function(v) FarmFlags.Halloween = v end,
+})
+TabFarm:CreateSlider({
+    Name = "Dura\u{E7}\u{E3}o do evento (min ap\u{F3}s a hora cheia)", Range = {5, 55}, Increment = 1, Suffix = " min",
+    CurrentValue = HW.window, Callback = function(v) HW.window = v end,
 })
 
 TabFruit:CreateSection("Frutas")
@@ -876,7 +888,7 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or FarmFlags.Pumpkin or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Pumpkin or FarmFlags.Halloween or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -1644,1190 +1656,191 @@ task.spawn(function()
 end)
 
 end
+-- ===== AUTO HALLOWEEN =====
 do
-    local NPC_1 = Vector3.new(-9479.2168, 141.215088, 5566.09277)
-    local NPC_2 = Vector3.new(-9516.9931640625, 172.01779174804688, 6078.46533203125)
-    local BONE_MOBS = {
-        { level = 1975, name = "Reborn Skeleton", keys = { "Reborn Skeleton" },                 quest = "HauntedQuest1", idx = 1, npc = NPC_1, area = Vector3.new(-8763.7236, 165.7232, 6159.8613) },
-        { level = 2000, name = "Living Zombie",   keys = { "Living Zombie" },                   quest = "HauntedQuest1", idx = 2, npc = NPC_1, area = Vector3.new(-10144.1318, 138.6274, 5838.0888) },
-        { level = 2025, name = "Demonic Soul",    keys = { "Demonic Soul" },                    quest = "HauntedQuest2", idx = 1, npc = NPC_2, area = Vector3.new(-9505.8721, 172.1049, 6158.9931) },
-        { level = 2050, name = "Posessed Mummy",  keys = { "Posessed Mummy", "Possessed Mummy" }, quest = "HauntedQuest2", idx = 2, npc = NPC_2, area = Vector3.new(-9582.0225, 6.2515, 6205.4785) },
-    }
-    local BRING_RADIUS = 350
+    local DOOR_START_INDEX = 135
+    local BOSS_DOOR_INDEX  = 123
+    local BOSS_NAME        = "Hellfire Gas"
+    local HOLD_E_TIME      = 2
+    local MOB_SEARCH_RADIUS = 350
+    local MARKERS = { "hallow", "pumpkin", "jack", "spook", "ghost", "skull", "halloween" }
 
-    local function MyLevel()
-        local d = player:FindFirstChild("Data")
-        local l = d and d:FindFirstChild("Level")
-        return l and tonumber(l.Value) or 0
+    local function DoorFolder()
+        local m = WS:FindFirstChild("Map")
+        local d = m and m:FindFirstChild("Dressrosa")
+        return d and d:FindFirstChild("Dressrosa")
     end
-
-    local function UnlockedMobs(level)
-        local list = {}
-        for _, m in ipairs(BONE_MOBS) do
-            if level >= m.level then table.insert(list, m) end
+    local function IsHalloweenDoor(d)
+        local function has(n)
+            n = n:lower()
+            for _, m in ipairs(MARKERS) do if n:find(m, 1, true) then return true end end
+            return false
         end
-        return list
-    end
-
-    local function NameMatches(text, mob)
-        text = tostring(text):lower()
-        for _, k in ipairs(mob.keys) do
-            if text:find(k:lower(), 1, true) then return true end
+        if has(d.Name) then return true end
+        for _, x in ipairs(d:GetDescendants()) do
+            if has(x.Name) then return true end
         end
         return false
     end
-    local function QuestText()
-        local pg = player:FindFirstChild("PlayerGui")
-        local main = pg and pg:FindFirstChild("Main")
-        local q = main and main:FindFirstChild("Quest")
-        if not q or not q.Visible then return nil end
-        local parts = {}
-        for _, d in ipairs(q:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text ~= "" then table.insert(parts, d.Text:lower()) end
-        end
-        return #parts > 0 and table.concat(parts, " ") or nil
-    end
-    local function StemMatch(name, qtext)
-        if not qtext then return false end
-        local n = 0
-        for w in tostring(name):lower():gmatch("%a+") do
-            if #w >= 3 then
-                n += 1
-                local stem = #w > 3 and w:sub(1, #w - 1) or w
-                if not qtext:find(stem, 1, true) then return false end
-            end
-        end
-        return n >= 2
-    end
-    local function MobMatch(name, mob, qtext)
-        return NameMatches(name, mob) or StemMatch(name, qtext)
-    end
-
-    local function QuestActive(mob)
-        local pg = player:FindFirstChild("PlayerGui")
-        local main = pg and pg:FindFirstChild("Main")
-        local q = main and main:FindFirstChild("Quest")
-        if not q then return nil end
-        if not q.Visible then return false end
-        local this, other = false, false
-        for _, d in ipairs(q:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text ~= "" then
-                if NameMatches(d.Text, mob) then
-                    this = true
-                else
-                    for _, m2 in ipairs(BONE_MOBS) do
-                        if m2 ~= mob and NameMatches(d.Text, m2) then other = true end
-                    end
-                end
-            end
-        end
-        return this or not other
-    end
-    local function NearbyNames(root)
-        local seen, list = {}, {}
-        local folder = Enemies()
-        if folder then
-            for _, e in ipairs(folder:GetChildren()) do
-                local r = e:FindFirstChild("HumanoidRootPart")
-                if r and (r.Position - root.Position).Magnitude <= 700 and not seen[e.Name] then
-                    seen[e.Name] = true
-                    table.insert(list, e.Name)
-                    if #list >= 8 then break end
-                end
-            end
-        end
-        return #list > 0 and table.concat(list, ", ") or "(nenhum)"
-    end
-
-    local function StillAlive(model)
-        if not model or not model.Parent then return false, nil end
-        local hum = model:FindFirstChildOfClass("Humanoid")
-        local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("UpperTorso")
-        if hum and hrp and hum.Health > 0 then return true, hrp end
-        return false, nil
-    end
-
-    local function AllUnlockedAlive(unlocked, qtext)
+    local function HalloweenDoors()
         local out = {}
-        local folder = Enemies()
-        if not folder then return out end
-        for _, e in ipairs(folder:GetChildren()) do
-            for _, mob in ipairs(unlocked) do
-                if MobMatch(e.Name, mob, qtext) then
-                    local alive, hrp = StillAlive(e)
-                    if alive then table.insert(out, { model = e, hrp = hrp, mob = mob }) end
-                    break
-                end
+        local f = DoorFolder()
+        if not f then return out end
+        local kids = f:GetChildren()
+        for i, d in ipairs(kids) do
+            if i == DOOR_START_INDEX or (i ~= BOSS_DOOR_INDEX and IsHalloweenDoor(d)) then
+                local p = InstPos(d)
+                if p then table.insert(out, { idx = i, inst = d, pos = p }) end
             end
         end
         return out
     end
-
-    local spawnCache = {}
-    local function SpawnPositions(mob, qtext)
-        local key = mob.name .. "|" .. tostring(qtext)
-        local c = spawnCache[key]
-        if c and os.clock() - c.t < 10 then return c.list end
-        local out = {}
-        local wo = WS:FindFirstChild("_WorldOrigin")
-        if wo then
-            local folder = wo:FindFirstChild("EnemySpawns")
-            for _, p in ipairs((folder or wo):GetDescendants()) do
-                if (p:IsA("BasePart") or p:IsA("Model")) and MobMatch(p.Name, mob, qtext) then
-                    local pos = InstPos(p)
-                    if pos then table.insert(out, pos) end
+    local function BossModel()
+        local e = Enemies()
+        local b = e and e:FindFirstChild(BOSS_NAME)
+        local alive, hrp = IsAlive(b)
+        if alive then return b, hrp end
+    end
+    local function BossDoorFrame()
+        local f = DoorFolder()
+        local d = f and f:GetChildren()[BOSS_DOOR_INDEX]
+        return d and d:FindFirstChild("Frame")
+    end
+    local function PressE(down)
+        pcall(function() VIM:SendKeyEvent(down, Enum.KeyCode.E, false, game) end)
+    end
+    local function FirePrompts(inst)
+        if not fireproximityprompt then return end
+        for _, x in ipairs(inst:GetDescendants()) do
+            if x:IsA("ProximityPrompt") then pcall(fireproximityprompt, x) end
+        end
+    end
+    local function NearestMob(origin, radius)
+        local best, bd, bh
+        local f = Enemies()
+        if not f then return end
+        for _, e in ipairs(f:GetChildren()) do
+            if e.Name ~= BOSS_NAME then
+                local alive, hrp = IsAlive(e)
+                if alive then
+                    local d = (hrp.Position - origin).Magnitude
+                    if d <= radius and (not bd or d < bd) then best, bd, bh = e, d, hrp end
                 end
             end
         end
-        spawnCache[key] = { t = os.clock(), list = out }
-        return out
+        return best, bh
     end
+    local function Hit(char, model, hrp)
+        AttackList({ { model = model, hrp = hrp } })
+        local tool = GetSword()
+        if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
+    end
+
+    local S = { visited = {}, cur = nil, dwell = 0, pressed = false, reenter = false, lastHour = -1 }
+
+    -- morreu: na volta, precisa entrar de novo na porta do boss
+    local function HookDeath(char)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if hum then hum.Died:Connect(function() S.reenter = true end) end
+    end
+    if player.Character then task.spawn(HookDeath, player.Character) end
+    player.CharacterAdded:Connect(function(c) task.spawn(HookDeath, c) end)
 
     task.spawn(function()
-        local LockedTarget, LockedMob = nil, nil
-
-        local missionIdx = 1
-        local curMissionMob = nil
-        local starting, startingSince = false, 0
-        local lastTry, lastDbg, lastSim = 0, 0, 0
-        local spawnIdx, spawnSince = 1, os.clock()
-        local lastHit, lastAct = 0, 0
-        local lastQText = nil
-        local fails = 0
-        local wasActive, needGoFarm = false, false
-
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            if FarmActive() and not StartSeaEvent and not anyTrue(MirageFlags)
-                and not RaceBusy() and not WantRaidDone() then
-                local ok, err = pcall(function()
-                    local char = player.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    local root = char and char:FindFirstChild("HumanoidRootPart")
-                    if not hum or not root then return end
-                    if hum.SeatPart then JumpOffBoat(hum) return end
-
-                    local level = MyLevel()
-                    local unlocked = UnlockedMobs(level)
-                    if #unlocked == 0 then
-                        Notify("O farm de Osso precisa de n\u{ED}vel 1975+ (seu n\u{ED}vel: " .. level .. ").")
-                        return
-                    end
-
-                    local now = os.clock()
-                    if now - lastSim > 5 then
-                        lastSim = now
-                        pcall(function()
-                            if sethiddenproperty then sethiddenproperty(player, "SimulationRadius", 4000) end
-                        end)
-                    end
-
-                    if not wasActive then wasActive, needGoFarm = true, true end
-                    if needGoFarm then
-                        FlyTo(FARM_POS, dt, MIRAGE_SPEED)
-                        if (root.Position - FARM_POS).Magnitude <= 20 then
-                            needGoFarm = false
-                        else
-                            return
-                        end
-                    end
-
-                    local qtext = QuestText()
-                    if qtext ~= lastQText then
-                        lastQText = qtext
-                        print("[SpectralHub] Texto da miss\u{E3}o:", tostring(qtext))
-                    end
-
-                    local lockedAlive, lockedHrp = StillAlive(LockedTarget)
-                    if lockedAlive then
-                        EquipSword()
-                        local base = lockedHrp.Position
-
-                        FreezeEnemy(LockedTarget, lockedHrp)
-                        base = lockedHrp.Position
-
-                        FlyTo(base + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                        HoldPlayer(root)
-
-                        local nearby = AllUnlockedAlive(unlocked, qtext)
-                        for _, m in ipairs(nearby) do
-                            if m.model ~= LockedTarget and (m.hrp.Position - base).Magnitude <= BRING_RADIUS then
-                                pcall(function() FreezeEnemy(m.model, m.hrp, base) end)
-                            end
-                        end
-
-                        if now - lastHit >= 0.05 then
-                            lastHit = now
-                            local inRange = { { model = LockedTarget, hrp = lockedHrp, d = (lockedHrp.Position - root.Position).Magnitude } }
-                            for _, m in ipairs(nearby) do
-                                if m.model ~= LockedTarget then
-                                    local d = (m.hrp.Position - root.Position).Magnitude
-                                    if d <= KILL_AURA_RANGE then table.insert(inRange, { model = m.model, hrp = m.hrp, d = d }) end
-                                end
-                            end
-                            table.sort(inRange, function(a, b) return a.d < b.d end)
-                            AttackList(inRange)
-                        end
-                        if now - lastAct >= 0.25 then
-                            lastAct = now
-                            local tool = GetSword()
-                            if not tool then
-                                Notify("Nenhuma ferramenta do tipo '" .. SelectedToolLabel .. "' encontrada.")
-                            elseif tool.Parent == char then
-                                pcall(function() tool:Activate() end)
-                            end
-                        end
-
-                        if now - lastDbg >= 3 then
-                            lastDbg = now
-                            print("[SpectralHub] Farm Osso: alvo travado =", LockedTarget.Name)
-                        end
-
-                        spawnSince = now
-                        return
-                    end
-
-                    if LockedTarget then
-                        print("[SpectralHub] Farm Osso: alvo", LockedTarget.Name, "morreu/sumiu, liberando")
-                    end
-                    LockedTarget, LockedMob = nil, nil
-                    ReleaseHold()
-
-                    local aliveList = AllUnlockedAlive(unlocked, qtext)
-                    if #aliveList > 0 then
-                        local best, bd = nil, math.huge
-                        for _, e in ipairs(aliveList) do
-                            local d = (e.hrp.Position - root.Position).Magnitude
-                            if d < bd then best, bd = e, d end
-                        end
-                        if best then
-                            LockedTarget, LockedMob = best.model, best.mob
-                            pinned[best.model] = nil
-                            fails = 0
-                            print("[SpectralHub] Farm Osso: travando no alvo mais pr\u{F3}ximo ->", best.model.Name)
-                        end
-                        return
-                    end
-
-                    local activeMob = nil
-                    for _, m in ipairs(unlocked) do
-                        if QuestActive(m) then activeMob = m break end
-                    end
-
-                    if not activeMob then
-                        if curMissionMob == nil or not table.find(unlocked, curMissionMob) then
-                            missionIdx = ((missionIdx - 1) % #unlocked) + 1
-                            curMissionMob = unlocked[missionIdx]
-                            missionIdx += 1
-                        end
-                        local mob = curMissionMob
-
-                        if starting then
-                            if now - startingSince > 8 then starting = false else return end
-                        end
-                        if now - lastTry >= 3 then
-                            lastTry = now
-                            starting, startingSince = true, now
-                            task.spawn(function()
-                                pcall(function()
-                                    local cf = CommF()
-                                    if cf then
-                                        local ok2, res = pcall(function()
-                                            return cf:InvokeServer("StartQuest", mob.quest, mob.idx)
-                                        end)
-                                        print("[SpectralHub] StartQuest:", mob.quest, mob.idx, ok2, tostring(res))
-                                    end
-                                    task.wait(1.2)
-                                    local confirmed = QuestActive(mob)
-                                    if confirmed == true then
-                                        fails = 0
-                                    else
-                                        fails += 1
-                                        if fails >= 2 then
-                                            fails = 0
-                                            curMissionMob = nil
-                                            Notify("Miss\u{E3}o de " .. mob.name .. " n\u{E3}o iniciou, tentando a pr\u{F3}xima.")
-                                            print("[SpectralHub] Miss\u{E3}o de", mob.name, "n\u{E3}o confirmada: tentando pr\u{F3}ximo mob da rota\u{E7}\u{E3}o")
-                                        end
-                                    end
-                                end)
-                                starting = false
-                            end)
-                        end
-                        return
-                    end
-
-                    curMissionMob = activeMob
-                    local spawns = SpawnPositions(activeMob, qtext)
-                    if #spawns == 0 then spawns = { activeMob.area } end
-                    if spawnIdx > #spawns then spawnIdx = 1 end
-                    local target = spawns[spawnIdx] + Vector3.new(0, RACE_HEIGHT + 5, 0)
-                    FlyTo(target, dt, MIRAGE_SPEED)
-                    if (root.Position - target).Magnitude <= 30 then
-                        if now - spawnSince >= 6 then
-                            spawnIdx = spawnIdx % #spawns + 1
-                            spawnSince = now
-                        end
-                    else
-                        spawnSince = now
-                    end
-
-                    if now - lastDbg >= 3 then
-                        lastDbg = now
-                        print(string.format("[SpectralHub] Farm Osso: miss\u{E3}o ativa = %s | esperando nascer", activeMob.name))
-                        print("[SpectralHub] Inimigos perto de voc\u{EA}:", NearbyNames(root))
-                    end
-                end)
-                if not ok then warn("[SpectralHub] erro no Auto Farm:", err) end
-            else
-                LockedTarget, LockedMob = nil, nil
-                wasActive = false
-                if not WantRaidDone() and not RaceBusy() then ReleaseHold() end
-            end
-        end
-    end)
-end
-
-task.spawn(function()
-    local lastSig, lastPrint = nil, 0
-    while Alive() do
-        task.wait(1.5)
-        if FarmFlags.Buy then
-            pcall(function()
-                local cf = CommF()
-                if not cf then return end
-                local buy = cf:InvokeServer("Bones", "Buy", 1, 1)
-                local check = cf:InvokeServer("Bones", "Check")
-                local sig = tostring(buy) .. " | " .. tostring(check)
-                if sig ~= lastSig or os.clock() - lastPrint > 20 then
-                    lastSig, lastPrint = sig, os.clock()
-                    print("[SpectralHub] Bones Buy | Check:", sig)
-                end
-            end)
-        end
-    end
-end)
-
-task.spawn(function()
-    local lastTry, tries, pauseUntil, lastPrint, lastScan = 0, 0, 0, 0, 0
-    local missingSince, announced = nil, false
-    local guiVal, guiSrc = nil, nil
-
-    local function IsFull(v) return (v >= 0.999 and v <= 1.001) or v >= 99.9 end
-
-    local function FromCharacter()
-        local char = player.Character
-        if not char then return nil end
-        for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("NumberValue") or d:IsA("IntValue") then
-                local n = d.Name:lower()
-                if n:find("energy", 1, true) or n:find("fury", 1, true) or n:find("awaken", 1, true) then
-                    return d.Value, "personagem." .. d.Name
-                end
-            end
-        end
-        for name, val in pairs(char:GetAttributes()) do
-            local n = name:lower()
-            if type(val) == "number" and (n:find("energy", 1, true) or n:find("fury", 1, true) or n:find("awaken", 1, true)) then
-                return val, "atributo." .. name
-            end
-        end
-        return nil
-    end
-
-    local function FromGui()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return nil end
-        local best, src
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text:find("%%") then
-                local num = tonumber(d.Text:match("(%d+%.?%d*)%s*%%"))
-                if num then
-                    local chain, a, depth = d.Name, d.Parent, 0
-                    while a and a ~= pg and depth < 5 do
-                        chain = chain .. "/" .. a.Name
-                        a = a.Parent
-                        depth += 1
-                    end
-                    local c = chain:lower()
-                    if c:find("fury", 1, true) or c:find("energy", 1, true) or c:find("awaken", 1, true) or c:find("race", 1, true) then
-                        if not best or num > best then best, src = num, "tela." .. chain end
-                    end
-                end
-            end
-        end
-        return best, src
-    end
-
-    local function ActivateAwakeningRemote()
-        local char = player.Character
-        local bp = player:FindFirstChild("Backpack")
-        local awk = (char and char:FindFirstChild("Awakening")) or (bp and bp:FindFirstChild("Awakening"))
-        if not awk then return false, "Awakening n\u{E3}o encontrado" end
-
-        local rf = awk:FindFirstChild("RemoteFunction") or awk:FindFirstChildOfClass("RemoteFunction")
-        if rf then
-            local ok, res = pcall(function() return rf:InvokeServer(true) end)
-            return ok, res
-        end
-
-        local re = awk:FindFirstChildOfClass("RemoteEvent")
-        if re then
-            local ok, res = pcall(function() re:FireServer(true) end)
-            return ok, res
-        end
-
-        return false, "RemoteFunction n\u{E3}o encontrado em Awakening"
-    end
-
-    while Alive() do
-        task.wait(0.4)
-        if FarmFlags.V4 or RaceFlags.Train then
             local ok, err = pcall(function()
-                local now = os.clock()
-                if Transformed() then
-                    tries = 0
+                local t = os.date("*t")
+                if t.hour ~= S.lastHour then
+                    S.lastHour = t.hour
+                    S.visited, S.cur, S.dwell, S.pressed = {}, nil, 0, false
+                end
+                local boss, bossHrp = BossModel()
+                HW.active = FarmFlags.Halloween and (t.min < HW.window or boss ~= nil)
+                if not HW.active then
+                    if S.pressed then PressE(false); S.pressed = false end
                     return
                 end
 
-                local v, vsrc = FromCharacter()
-                if now - lastScan > 2 then
-                    lastScan = now
-                    guiVal, guiSrc = FromGui()
-                end
-                local found = v ~= nil or guiVal ~= nil
-                local full = (v ~= nil and IsFull(v)) or (guiVal ~= nil and guiVal >= 99.9)
-
-                local blind = false
-                if not found then
-                    missingSince = missingSince or now
-                    blind = now - missingSince > 5
-                else
-                    missingSince = nil
-                end
-                if blind and not announced then
-                    announced = true
-                    Notify("Auto ra\u{E7}a V4: medidor n\u{E3}o detectado, tentando ativar via Awakening periodicamente.")
-                elseif found then
-                    announced = false
-                end
-
-                if now - lastPrint > 5 then
-                    lastPrint = now
-                    print("[SpectralHub] Auto ra\u{E7}a V4: personagem =", tostring(vsrc), tostring(v),
-                        "| tela =", tostring(guiSrc), tostring(guiVal),
-                        "| cheio =", full, "| sem medidor =", blind, "| transformado =", Transformed())
-                end
-
-                local want, interval = full, 1.0
-                if blind then want, interval = true, 4.0 end
-                if not want then tries = 0 return end
-                if now < pauseUntil then return end
-
-                if tries >= 6 then
-                    tries = 0
-                    pauseUntil = now + 15
-                    print("[SpectralHub] Auto ra\u{E7}a V4: n\u{E3}o transformou ap\u{F3}s 6 chamadas, aguardando 15s")
-                    return
-                end
-
-                if now - lastTry >= interval then
-                    lastTry = now
-                    tries += 1
-                    task.spawn(function()
-                        local invoked, info = ActivateAwakeningRemote()
-                        if not invoked then
-                            print("[SpectralHub] Auto ra\u{E7}a V4 aviso:", tostring(info))
-                        end
-                    end)
-                end
-            end)
-            if not ok then warn("[SpectralHub] erro no Auto ra\u{E7}a V4:", err) end
-        end
-    end
-end)
-
-do
-local lastTrainText
-local function SetTrainStatus(t)
-    if lastTrainText == t then return end
-    lastTrainText = t
-    if TrainUI.Status then pcall(function() TrainUI.Status:Set(t) end) end
-end
-
-local function TryUpgradeRace()
-    local cf = CommF()
-    if not cf then return false end
-    local before = Frags()
-    local ok, res = pcall(function() return cf:InvokeServer("UpgradeRace", "Buy") end)
-    task.wait(1)
-    local after = Frags()
-    print("[SpectralHub] UpgradeRace Buy:", ok, tostring(res), "| fragmentos:", before, "->", after)
-    return ok and (after < before or res == true)
-end
-
-task.spawn(function()
-    local was = false
-    while Alive() do
-        local dt = Run.Heartbeat:Wait()
-        if TS.waiting and RaceFlags.Train then
-            was = true
-            pcall(function()
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 local root = char and char:FindFirstChild("HumanoidRootPart")
-                if not hum or not root then return end
+                if not hum or not root or hum.Health <= 0 then return end
                 if hum.SeatPart then JumpOffBoat(hum) return end
-                FlyTo(WAIT_POS, dt, MIRAGE_SPEED)
-                HoldPlayer(root)
-            end)
-        elseif was then
-            was = false
-            ReleaseHold()
-        end
-    end
-end)
+                EquipSword()
 
-task.spawn(function()
-    local state, wasOn, endedSince = "farm", false, nil
-    while Alive() do
-        task.wait(0.5)
-        if RaceFlags.Train then
-            pcall(function()
-                local transformed = Transformed()
-                if not wasOn then
-                    wasOn = true
-                    endedSince = nil
-                    state = transformed and "v4" or "farm"
-                    print("[SpectralHub] Treino de ra\u{E7}a iniciado no estado:", state)
-                end
-
-                if state == "farm" then
-                    TS.farm, TS.waiting = true, false
-                    SetTrainStatus("Treino: farmando osso at\u{E9} ativar a V4...")
-                    if transformed then
-                        state, endedSince = "v4", nil
-                        print("[SpectralHub] Treino: V4 ativada, indo esperar no ponto alto")
+                -- 1) BOSS tem prioridade
+                if boss and bossHrp then
+                    local dist = (bossHrp.Position - root.Position).Magnitude
+                    if dist <= 500 then
+                        S.reenter = false
+                        FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
+                        HoldPlayer(root)
+                        Hit(char, boss, bossHrp)
+                        return
                     end
-                else
-                    TS.farm, TS.waiting = false, true
-                    SetTrainStatus("Treino: V4 ativa, esperando ela acabar...")
-                    if transformed then
-                        endedSince = nil
-                    else
-                        endedSince = endedSince or os.clock()
-                        if os.clock() - endedSince >= 1.5 then
-                            TS.waiting = false
-                            SetTrainStatus("Treino: V4 acabou, checando upgrade...")
-                            if TryUpgradeRace() then NotifyNow("Upgrade da ra\u{E7}a comprado!") end
-                            state, endedSince = "farm", nil
-                        end
-                    end
-                end
-            end)
-        elseif wasOn then
-            wasOn = false
-            TS.farm, TS.waiting = false, false
-            SetTrainStatus("Treino: desligado")
-        end
-    end
-end)
-
-end
-do
-    local MIRAGE_DURATION = 600
-    local MOON_PHASES = {
-        ["9709149431"] = 0,
-        ["9709149052"] = 1,
-        ["9709143733"] = 2,
-        ["9709150401"] = 3,
-        ["9709135895"] = 4,
-    }
-
-    local scriptStart = os.clock()
-    local last = {}
-    local function setLabel(key, text)
-        if last[key] == text then return end
-        last[key] = text
-        local l = StatsUI[key]
-        if l then pcall(function() l:Set(text) end) end
-    end
-    local function fmt(sec)
-        sec = math.max(0, math.floor(sec))
-        return string.format("%02d:%02d", sec // 60, sec % 60)
-    end
-
-    task.spawn(function()
-        local mirageFirst, mirageEstimated, lastMoonId = nil, false, nil
-        while Alive() do
-            task.wait(1)
-            pcall(function()
-                setLabel("Fruit", "Fruta spawnada: " .. (#WorldFruits() > 0 and "\u{1F7E2}" or "\u{1F534}"))
-
-                if GetMirage() then
-                    if not mirageFirst then
-                        mirageFirst = os.clock()
-                        mirageEstimated = (os.clock() - scriptStart) < 10
-                    end
-                    local left = MIRAGE_DURATION - (os.clock() - mirageFirst)
-                    setLabel("Mirage", "Ilha da miragem: \u{1F7E2}  |  some em " .. (mirageEstimated and "~" or "") .. fmt(left))
-                else
-                    mirageFirst = nil
-                    setLabel("Mirage", "Ilha da miragem: \u{1F534}")
-                end
-
-                local sky = Lighting:FindFirstChildOfClass("Sky")
-                local tex = sky and sky.MoonTextureId
-                local id = tex and tostring(tex):match("%d+")
-                local n = id and MOON_PHASES[id]
-                if id ~= lastMoonId then
-                    lastMoonId = id
-                    print("[SpectralHub] Textura da lua:", tostring(id), "-> luas at\u{E9} a cheia:", tostring(n))
-                end
-                if n == nil then
-                    setLabel("Moon", "Luas at\u{E9} a lua cheia: lua falsa")
-                elseif n == 0 then
-                    setLabel("Moon", "Luas at\u{E9} a lua cheia: 0 (lua cheia agora!)")
-                else
-                    setLabel("Moon", "Luas at\u{E9} a lua cheia: " .. n)
-                end
-            end)
-        end
-    end)
-end
-
-do
-local waterOrig = nil
-local function WaterPlane()
-    local map = WS:FindFirstChild("Map")
-    return map and map:FindFirstChild("WaterBase-Plane")
-end
-task.spawn(function()
-    while Alive() do
-        task.wait(0.5)
-        pcall(function()
-            if WaterWalk then
-                local w = WaterPlane()
-                if not w then Notify("Plano da \u{E1}gua (WaterBase-Plane) n\u{E3}o encontrado.") return end
-                if not waterOrig or waterOrig.part ~= w then
-                    waterOrig = { part = w, size = w.Size, collide = w.CanCollide }
-                end
-                if w.Size.Y ~= WATER_WALK_Y or not w.CanCollide then
-                    w.Size = Vector3.new(w.Size.X, WATER_WALK_Y, w.Size.Z)
-                    w.CanCollide = true
-                end
-            elseif waterOrig then
-                local o = waterOrig
-                waterOrig = nil
-                if o.part and o.part.Parent then
-                    o.part.Size = o.size
-                    o.part.CanCollide = o.collide
-                end
-            end
-        end)
-    end
-end)
-
-end
-do
-local espCache = { Fruit = {}, Player = {} }
-local function DestroyRec(kind, key)
-    local rec = espCache[kind][key]
-    if rec then
-        pcall(function() rec.gui:Destroy() end)
-        pcall(function() rec.hl:Destroy() end)
-        espCache[kind][key] = nil
-    end
-end
-ClearESP = function(kind)
-    for k in pairs(espCache[kind]) do DestroyRec(kind, k) end
-end
-local function EnsureESP(kind, key, part, hlTarget, color)
-    local rec = espCache[kind][key]
-    if rec and rec.part == part and rec.gui.Parent then return rec end
-    DestroyRec(kind, key)
-    local gui = Instance.new("BillboardGui")
-    gui.Name = "SpectralESP"
-    gui.AlwaysOnTop = true
-    gui.Size = UDim2.fromOffset(180, 34)
-    gui.StudsOffset = Vector3.new(0, 3, 0)
-    gui.Adornee = part
-    local lbl = Instance.new("TextLabel")
-    lbl.BackgroundTransparency = 1
-    lbl.Size = UDim2.fromScale(1, 1)
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 14
-    lbl.TextColor3 = color
-    lbl.TextStrokeTransparency = 0.3
-    lbl.Parent = gui
-    gui.Parent = part
-    local hl = Instance.new("Highlight")
-    hl.Name = "SpectralESPHL"
-    hl.FillColor, hl.OutlineColor = color, color
-    hl.FillTransparency = 0.7
-    hl.Adornee = hlTarget
-    hl.Parent = hlTarget
-    rec = { gui = gui, hl = hl, label = lbl, part = part }
-    espCache[kind][key] = rec
-    return rec
-end
-task.spawn(function()
-    while Alive() do
-        task.wait(0.4)
-        pcall(function()
-            local root = MyRoot()
-            if ESPFlags.Fruit then
-                local seen = {}
-                for _, f in ipairs(WorldFruits()) do
-                    local h = f:FindFirstChild("Handle")
-                    if h then
-                        seen[f] = true
-                        local rec = EnsureESP("Fruit", f, h, f, Color3.fromRGB(255, 200, 0))
-                        local d = root and (root.Position - h.Position).Magnitude or 0
-                        rec.label.Text = string.format("%s [%dm]", f.Name, d)
-                    end
-                end
-                for k in pairs(espCache.Fruit) do
-                    if not seen[k] then DestroyRec("Fruit", k) end
-                end
-            end
-            if ESPFlags.Player then
-                local seen = {}
-                for _, p in ipairs(Players:GetPlayers()) do
-                    local c = p ~= player and p.Character
-                    local part = c and (c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart"))
-                    if part then
-                        seen[p] = true
-                        local rec = EnsureESP("Player", p, part, c, Color3.fromRGB(255, 70, 70))
-                        local d = root and (root.Position - part.Position).Magnitude or 0
-                        rec.label.Text = string.format("%s [%dm]", p.Name, d)
-                    end
-                end
-                for k in pairs(espCache.Player) do
-                    if not seen[k] then DestroyRec("Player", k) end
-                end
-            end
-        end)
-    end
-end)
-
-end
-do
-local lastTempleTp = 0
-
-local function GetRaceName()
-    local data = player:FindFirstChild("Data")
-    local rv = data and data:FindFirstChild("Race")
-    return rv and tostring(rv.Value) or nil
-end
-
-local function TeleportToTemple()
-    if hitboxBusy or os.clock() - lastTempleTp < TEMPLE_TP_COOLDOWN then return end
-    lastTempleTp = os.clock()
-    task.spawn(UseCastleHitbox)
-end
-
-local function NearestEnemy(origin, radius)
-    local folder = Enemies()
-    if not folder then return nil end
-    local be, bh, bd
-    for _, e in ipairs(folder:GetChildren()) do
-        local alive, hrp = IsAlive(e)
-        if alive then
-            local d = (hrp.Position - origin).Magnitude
-            if d <= radius and (not bd or d < bd) then be, bh, bd = e, hrp, d end
-        end
-    end
-    return be, bh
-end
-local function NearestPlayer(origin, radius)
-    local bp, bc, bh, bd
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character then
-            local h = p.Character:FindFirstChildOfClass("Humanoid")
-            local r = p.Character:FindFirstChild("HumanoidRootPart")
-            if h and r and h.Health > 0 then
-                local d = (r.Position - origin).Magnitude
-                if d <= radius and (not bd or d < bd) then bp, bc, bh, bd = p, p.Character, r, d end
-            end
-        end
-    end
-    return bp, bc, bh
-end
-
-task.spawn(function()
-    local lastHit = 0
-    while Alive() do
-        local dt = Run.Heartbeat:Wait()
-        if RaceBusy() and not StartSeaEvent and not anyTrue(MirageFlags) then
-            local ok, err = pcall(function()
-                local char = player.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                if not hum or not root then return end
-                if hum.SeatPart then JumpOffBoat(hum) return end
-
-                if RaceFlags.Door then
                     ReleaseHold()
-                    if (root.Position - TEMPLE_CENTER).Magnitude > TEMPLE_NEAR then
-                        TeleportToTemple(dt)
-                        return
+                    local frame = BossDoorFrame()
+                    if frame then
+                        local p = InstPos(frame)
+                        FlyTo(p, dt, MIRAGE_SPEED)
+                        if (root.Position - p).Magnitude <= 10 and firetouchinterest then
+                            pcall(function() firetouchinterest(root, frame, 0) firetouchinterest(root, frame, 1) end)
+                        end
+                    else
+                        FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, MIRAGE_SPEED)
                     end
-
-                    local race = GetRaceName()
-                    local pos = RACE_DOOR_POSITION or (race and DOOR_POS[race:lower()])
-                    if not pos then
-                        Notify("Ra\u{E7}a n\u{E3}o reconhecida: " .. tostring(race))
-                        print("[SpectralHub] Data.Race =", race)
-                        return
-                    end
-                    FlyTo(pos + Vector3.new(0, 3, 0), dt, MIRAGE_SPEED)
                     return
                 end
 
-                if RaceFlags.KillPlayers then
-                    local p, pc, ph = NearestPlayer(root.Position, KILL_RADIUS)
-                    if p then
-                        EquipSword()
-                        FlyTo(ph.Position + Vector3.new(0, 4, 0), dt, 300)
-                        local ra, rh = RegAttack(), RegHit()
-                        if ra and rh and os.clock() - lastHit >= 0.05
-                            and (root.Position - ph.Position).Magnitude <= 120 then
-                            lastHit = os.clock()
-                            ra:FireServer(0.36666667461395, 1)
-                            rh:FireServer(ph, {{pc, ph}}, "9de8d7f4")
-                        end
-                        return
-                    end
-                end
-                if RaceFlags.Trial then
-                    local e, eh = NearestEnemy(root.Position, TRIAL_RADIUS)
-                    if e then
-                        EquipSword(); AutoCombatForce = true
-                        FlyTo(eh.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                        HoldPlayer(root)
-                        return
-                    end
+                -- 2) NPC que spawnou perto de mim/da porta
+                local mob, mobHrp = NearestMob(root.Position, MOB_SEARCH_RADIUS)
+                if mob and S.cur and S.visited[S.cur.idx] then
+                    FlyTo(mobHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
+                    HoldPlayer(root)
+                    Hit(char, mob, mobHrp)
+                    return
                 end
                 ReleaseHold()
-            end)
-            if not ok then warn("[SpectralHub] erro na Ra\u{E7}a:", err) end
-        end
-    end
-end)
 
-end
-task.spawn(function()
-    local track = {
-        target = nil, lastHealth = 0, lastChange = 0, escapeUntil = 0, hitUntil = 0,
-        hitHeight = HIT_ESCAPE_HEIGHT, myLast = 0, lowHp = false, lowHeight = LOWHP_START,
-    }
+                -- 3) ciclo de portas de Halloween
+                local doors = HalloweenDoors()
+                if #doors == 0 then Notify("Nenhuma porta de Halloween encontrada.") return end
 
-    while Alive() do
-        local dt = Run.Heartbeat:Wait()
-        if StartSeaEvent then
-            local ok, err = pcall(function()
-                local char = player.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                if not hum or not root then return end
-
-                local boat = GetBoatChecked(hum, root)
-                currentBoat = boat
-
-                local target = FindTarget()
-                if target then
-                    local alive, eroot = IsAlive(target)
-                    if alive then
-                        EquipSword(); CleanBoatMovers(boat); AutoCombatForce = true
-                        if hum.SeatPart then JumpOffBoat(hum) return end
-
-                        if IsTerror(target) then
-                            local eh = target:FindFirstChildOfClass("Humanoid")
-                            local now = os.clock()
-                            local hp = hum.Health
-                            local pct = hp / math.max(hum.MaxHealth, 1)
-
-                            if track.target ~= target then
-                                track.target = target
-                                track.lastHealth = eh and eh.Health or 0
-                                track.lastChange = now
-                                track.escapeUntil, track.hitUntil = 0, 0
-                                track.hitHeight = HIT_ESCAPE_HEIGHT
-                                track.myLast = hp
-                                track.lowHp = false
-                                track.lowHeight = LOWHP_START
-                            end
-                            if eh then
-                                if eh.Health < track.lastHealth then track.lastChange = now end
-                                track.lastHealth = eh.Health
-                            end
-                            local tookDamage = hp < track.myLast - 0.01
-                            track.myLast = hp
-
-                            if not track.lowHp and pct < LOWHP_THRESHOLD then
-                                print("[SpectralHub] Vida < 20%, fugindo")
-                                track.lowHp, track.lowHeight = true, LOWHP_START
-                                track.escapeUntil, track.hitUntil = 0, 0
-                            end
-                            if track.lowHp then
-                                if pct >= LOWHP_RECOVER then
-                                    print("[SpectralHub] Vida em 50%, voltando")
-                                    track.lowHp = false
-                                    track.lastChange = now
-                                else
-                                    track.lowHeight = math.min(LOWHP_MAX, track.lowHeight + LOWHP_RISE * dt)
-                                    TeleportTo(eroot.Position + Vector3.new(0, track.lowHeight, 0))
-                                    return
-                                end
-                            end
-
-                            if now < track.hitUntil then
-                                TeleportTo(eroot.Position + Vector3.new(0, track.hitHeight, 0))
-                                return
-                            end
-                            local stunned = IsStunned(char, hum)
-                            if tookDamage or stunned then
-                                local h = stunned and STUN_ESCAPE_HEIGHT or HIT_ESCAPE_HEIGHT
-                                print("[SpectralHub] " .. (stunned and "Stun" or "Dano") .. ", subindo " .. h)
-                                track.hitHeight = h
-                                TeleportTo(eroot.Position + Vector3.new(0, h, 0))
-                                track.hitUntil = now + HIT_ESCAPE_HOLD
-                                track.escapeUntil = 0
-                                track.lastChange = now + HIT_ESCAPE_HOLD
-                                return
-                            end
-
-                            if now < track.escapeUntil then
-                                TeleportTo(eroot.Position + Vector3.new(0, TERROR_ESCAPE_HEIGHT, 0))
-                                return
-                            end
-                            local flat = Vector3.new(root.Position.X - eroot.Position.X, 0, root.Position.Z - eroot.Position.Z).Magnitude
-                            local above = root.Position.Y > eroot.Position.Y and flat <= TERROR_ABOVE_RADIUS
-                            if above and now - track.lastChange >= TERROR_NO_DAMAGE_TIME then
-                                print("[SpectralHub] Terror sem dano, subindo")
-                                TeleportTo(eroot.Position + Vector3.new(0, TERROR_ESCAPE_HEIGHT, 0))
-                                track.escapeUntil = now + TERROR_ESCAPE_HOLD
-                                track.lastChange = now + TERROR_ESCAPE_HOLD
-                                return
-                            end
-
-                            FlyTo(eroot.Position + Vector3.new(0, TERROR_HEIGHT, 0), dt, 250)
-                        else
-                            track.target = nil
-                            FlyTo(eroot.Position + Vector3.new(0, ATTACK_HEIGHT, 0), dt, 250)
+                if not S.cur or S.visited[S.cur.idx] then
+                    local best, bd
+                    for _, d in ipairs(doors) do
+                        if not S.visited[d.idx] then
+                            local dd = (d.pos - root.Position).Magnitude
+                            if not bd or dd < bd then best, bd = d, dd end
                         end
-                        return
                     end
+                    if not best then S.visited = {} return end   -- deu a volta: recomeça
+                    S.cur, S.dwell, S.pressed = best, 0, false
                 end
 
-                track.target, track.lowHp = nil, false
-                SailStep(hum, root, dt, boat)
+                local target = S.cur.pos + Vector3.new(0, 3, 0)
+                FlyTo(target, dt, MIRAGE_SPEED)
+                if (root.Position - target).Magnitude <= 8 then
+                    if not S.pressed then PressE(true); S.pressed = true; FirePrompts(S.cur.inst) end
+                    S.dwell += dt
+                    if S.dwell >= HOLD_E_TIME then
+                        PressE(false); S.pressed = false
+                        S.visited[S.cur.idx] = true
+                    end
+                else
+                    S.dwell = 0
+                end
             end)
-            if not ok then warn("[SpectralHub] erro no Sea Event:", err) end
-        elseif not anyTrue(MirageFlags) then
-            if currentBoat then CleanBoatMovers(currentBoat) end
-            currentBoat = nil
-        end
-    end
-end)
-
--- ============================================================
--- AUTO PUMPKIN HUNT
--- ============================================================
-do
-    local function IsGone(p)
-        if not p or not p.Parent or not p:IsDescendantOf(WS) then return true end
-        if p:IsA("BasePart") and p.Transparency >= 1 then return true end
-        if p:IsA("Model") or p:IsA("Folder") then
-            local anyVisible = false
-            for _, d in ipairs(p:GetDescendants()) do
-                if d:IsA("BasePart") and d.Transparency < 1 then anyVisible = true break end
-            end
-            if not anyVisible then return true end
-        end
-        return false
-    end
-
-    -- abóboras que acabaram de sumir (ignoradas por 10s para não voltar nelas)
-    local recentlyGone = setmetatable({}, { __mode = "k" })
-    local GONE_IGNORE_TIME = 10
-
-    -- tenta primeiro o caminho informado; se nao achar, procura qualquer PumpkinV4*
-    local function FindPumpkins()
-        local list = {}
-        local folder = WS:FindFirstChild("PumpkinHunt")
-        if not folder then return list end
-        pcall(function()
-            local c = folder:GetChildren()[4]
-            local p = c and c:FindFirstChild("PumpkinV4.008")
-            if p and not IsGone(p) then table.insert(list, p) end
-        end)
-        for _, d in ipairs(folder:GetDescendants()) do
-            if d.Name:match("^PumpkinV4") and not IsGone(d) and not table.find(list, d) then
-                table.insert(list, d)
-            end
-        end
-        return list
-    end
-
-    local function FindJack()
-        local folder = Enemies()
-        local j = folder and folder:FindFirstChild("Jack o' Lantern")
-        if j then
-            local alive, hrp = IsAlive(j)
-            if alive then return j, hrp end
-        end
-        return nil
-    end
-
-    local function ClickScreen()
-        pcall(function()
-            local cam = WS.CurrentCamera
-            if not cam then return end
-            local x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2
-            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
-        end)
-    end
-
-    task.spawn(function()
-        local currentPumpkin = nil
-        local lastClick, lastHit, lastAct, lastDbg = 0, 0, 0, 0
-        local insideSince, insidePumpkin = nil, nil
-        local INSIDE_RESET_TIME = 6
-        local flyOnly = false -- depois de um reset: voa ate a abobora sem teleportar
-
-        local function FlyOnlyTo(pos, dt, speed)
-            local r = MyRoot() if not r then return end
-            local off = pos - r.Position
-            local d = off.Magnitude
-            if d > 1 then
-                r.CFrame = CFrame.new(r.Position + off.Unit * math.min(d, speed * dt)) * r.CFrame.Rotation
-            end
-            r.AssemblyLinearVelocity = Vector3.zero
-        end
-
-        while Alive() do
-            local dt = Run.Heartbeat:Wait()
-            if FarmFlags.Pumpkin and not StartSeaEvent and not anyTrue(MirageFlags)
-                and not RaceBusy() and not WantRaidDone() then
-                local ok, err = pcall(function()
-                    local char = player.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    local root = char and char:FindFirstChild("HumanoidRootPart")
-                    if not hum or not root then return end
-                    if hum.SeatPart then JumpOffBoat(hum) return end
-
-                    local now = os.clock()
-
-                    -- 1) PRIORIDADE: Jack o' Lantern spawnou -> vai matar
-                    local jack, jhrp = FindJack()
-                    if jack then
-                        insideSince, insidePumpkin = nil, nil
-                        EquipSword()
-                        FlyTo(jhrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                        if now - lastHit >= 0.05 then
-                            lastHit = now
-                            local d = (jhrp.Position - root.Position).Magnitude
-                            AttackList({ { model = jack, hrp = jhrp, d = d } })
-                        end
-                        if now - lastAct >= 0.25 then
-                            lastAct = now
-                            local tool = GetSword()
-                            if tool and tool.Parent == char then
-                                pcall(function() tool:Activate() end)
-                            end
-                        end
-                        if now - lastDbg >= 3 then
-                            lastDbg = now
-                            print("[SpectralHub] Pumpkin: matando Jack o' Lantern")
-                        end
-                        return
-                    end
-
-                    -- 2) ab\u{F3}bora atual sumiu -> escolhe a mais pr\u{F3}xima
-                    if IsGone(currentPumpkin) then
-                        if currentPumpkin then
-                            print("[SpectralHub] Pumpkin: ab\u{F3}bora sumiu, procurando a pr\u{F3}xima")
-                            flyOnly = false
-                            recentlyGone[currentPumpkin] = now
-                        end
-                        currentPumpkin = nil
-                        local best, bd
-                        for _, p in ipairs(FindPumpkins()) do
-                            local goneAt = recentlyGone[p]
-                            local pos = InstPos(p)
-                            if pos and not (goneAt and now - goneAt < GONE_IGNORE_TIME) then
-                                local d = (pos - root.Position).Magnitude
-                                if not bd or d < bd then best, bd = p, d end
-                            end
-                        end
-                        currentPumpkin = best
-                        if best then print("[SpectralHub] Pumpkin: indo para", best:GetFullName()) end
-                    end
-
-                    if not currentPumpkin then
-                        Notify("Nenhuma ab\u{F3}bora dispon\u{ED}vel, esperando spawnar...")
-                        return
-                    end
-
-                    -- 3) entra na ab\u{F3}bora, equipa a espada e clica
-                    local pos = InstPos(currentPumpkin)
-                    if not pos then return end
-                    EquipSword()
-                    if flyOnly then
-                        FlyOnlyTo(pos, dt, 300) -- voa de verdade, sem teleportar
-                    else
-                        FlyTo(pos, dt, 300) -- teleporta direto quando faltar <= TP_DISTANCE
-                    end
-                    TouchInst(currentPumpkin, root)
-
-                    if (root.Position - pos).Magnitude <= 15 then
-                        -- come\u{E7}a a contar o tempo dentro da mesma ab\u{F3}bora
-                        if insidePumpkin ~= currentPumpkin or not insideSince then
-                            insidePumpkin, insideSince = currentPumpkin, now
-                        end
-
-                        -- ficou mais de 4s e a ab\u{F3}bora n\u{E3}o sumiu: provavelmente n\u{E3}o est\u{E1} dentro de verdade
-                        if now - insideSince >= INSIDE_RESET_TIME then
-                            print("[SpectralHub] Pumpkin: mais de " .. INSIDE_RESET_TIME .. "s na ab\u{F3}bora sem ela sumir, resetando personagem")
-                            insideSince, insidePumpkin, currentPumpkin = nil, nil, nil
-                            flyOnly = true
-                            ReleaseHold()
-                            pcall(function() hum.Health = 0 end)
-                            return
-                        end
-
-                        if now - lastClick >= 0.1 then
-                            lastClick = now
-                            ClickScreen()
-                            local tool = GetSword()
-                            if tool and tool.Parent == char then
-                                pcall(function() tool:Activate() end)
-                            end
-                        end
-                    else
-                        insideSince, insidePumpkin = nil, nil
-                    end
-
-                    if now - lastDbg >= 3 then
-                        lastDbg = now
-                        print("[SpectralHub] Pumpkin: dentro da ab\u{F3}bora, clicando")
-                    end
-                end)
-                if not ok then warn("[SpectralHub] erro no Pumpkin Hunt:", err) end
-            else
-                currentPumpkin = nil
-                flyOnly = false
-                insideSince, insidePumpkin = nil, nil
-            end
+            if not ok then warn("[SpectralHub] erro no Auto Halloween:", err) end
         end
     end)
 end
 
-print("[SpectralHub] 5 - pronto!")
-end
-
-local ok, err = xpcall(main, function(e) return tostring(e) .. "\n" .. debug.traceback() end)
-if not ok then warn("[SpectralHub] ERRO FATAL:", err) end
+-- >>> FIM DO QUE EXISTIA NO ARQUIVO ENVIADO <<<
+-- O arquivo spectral_hub.txt que voce enviou estava cortado a partir de:
+--     do
+--         local NPC_1 = Vector3.new(-9479.2168, ...)
+--         local BONE_MOBS = { { level = 1975, name = "Reborn Skeleton", ke...
+-- Cole aqui, EXATAMENTE como esta no seu script original, tudo dessa linha "do local NPC_1" ate o final
+-- (incluindo o "end" que fecha main() e a chamada final de main()).
