@@ -119,7 +119,7 @@ local abandoned = setmetatable({}, { __mode = "k" })
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
 local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false, Halloween=false }
-local HW = { active = false, window = 20 }   -- active: evento rolando (farm normal pausa); window: minutos apos a hora cheia
+local HW = { active = false, boss = false, window = 20 }   -- active: evento rolando (farm normal pausa); window: minutos apos a hora cheia
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -385,10 +385,6 @@ TabFarm:CreateToggle({
 TabFarm:CreateToggle({
     Name = "Auto Halloween (portas + boss Hellfire Gas)", CurrentValue = FarmFlags.Halloween,
     Callback = function(v) FarmFlags.Halloween = v end,
-})
-TabFarm:CreateSlider({
-    Name = "Dura\u{E7}\u{E3}o do evento (min ap\u{F3}s a hora cheia)", Range = {5, 55}, Increment = 1, Suffix = " min",
-    CurrentValue = HW.window, Callback = function(v) HW.window = v end,
 })
 
 TabFruit:CreateSection("Frutas")
@@ -1067,7 +1063,7 @@ task.spawn(function()
     local idx, lastAll = 1, false
     while Alive() do
         local dt = Run.Heartbeat:Wait()
-        if anyTrue(MirageFlags) and not StartSeaEvent then
+        if anyTrue(MirageFlags) and not StartSeaEvent and not HW.boss then
             local ok, err = pcall(function()
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1207,7 +1203,7 @@ task.spawn(function()
     local pulled = setmetatable({}, { __mode = "k" })
     while Alive() do
         task.wait(0.3)
-        if FruitFlags.Collect then
+        if FruitFlags.Collect and not HW.boss then
             pcall(function()
                 local root = MyRoot()
                 if not root then return end
@@ -1446,7 +1442,7 @@ task.spawn(function()
         if RaidReset then
             current, hoverPos, nilFor, travelFrom, sawEnemy, emptyFor, RaidReset = nil, nil, 0, nil, false, 0, false
         end
-        if WantRaidDone() and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy() then
+        if WantRaidDone() and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy() and not HW.boss then
             local ok, err = pcall(function()
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1557,7 +1553,7 @@ task.spawn(function()
             if not ok then warn("[SpectralHub] erro no Auto completar raid:", err) end
         else
             RaidNoclip = false
-            if not FarmActive() and not RaceBusy() then ReleaseHold() end
+            if not FarmActive() and not RaceBusy() and not HW.active then ReleaseHold() end
         end
     end
 end)
@@ -1736,7 +1732,8 @@ do
         if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
     end
 
-    local S = { visited = {}, cur = nil, dwell = 0, pressed = false, reenter = false, lastHour = -1 }
+    local S = { visited = {}, cur = nil, dwell = 0, pressed = false, reenter = false, lastHour = -1,
+                bossKilled = false, sawBoss = false, enteredAt = nil }
 
     -- morreu: na volta, precisa entrar de novo na porta do boss
     local function HookDeath(char)
@@ -1754,9 +1751,18 @@ do
                 if t.hour ~= S.lastHour then
                     S.lastHour = t.hour
                     S.visited, S.cur, S.dwell, S.pressed = {}, nil, 0, false
+                    S.bossKilled, S.sawBoss, S.enteredAt = false, false, nil
                 end
                 local boss, bossHrp = BossModel()
-                HW.active = FarmFlags.Halloween and (t.min < HW.window or boss ~= nil)
+                local frame = BossDoorFrame()
+                local inWindow = t.min < HW.window
+                if boss then S.sawBoss = true
+                elseif S.sawBoss and not S.reenter then S.bossKilled, S.sawBoss = true, false end
+                -- prioridade maxima: porta do boss spawnou (ou boss vivo) e ainda nao foi morto nesta hora
+                local wantBoss = FarmFlags.Halloween and not S.bossKilled
+                    and (boss ~= nil or (frame ~= nil and inWindow))
+                HW.boss = wantBoss and true or false
+                HW.active = FarmFlags.Halloween and (inWindow or boss ~= nil)
                 if not HW.active then
                     if S.pressed then PressE(false); S.pressed = false end
                     return
@@ -1769,25 +1775,32 @@ do
                 if hum.SeatPart then JumpOffBoat(hum) return end
                 EquipSword()
 
-                -- 1) BOSS tem prioridade
-                if boss and bossHrp then
-                    local dist = (bossHrp.Position - root.Position).Magnitude
-                    if dist <= 500 then
-                        S.reenter = false
+                -- 1) BOSS: prioridade maxima, ignora portas, NPCs e todo o resto
+                if wantBoss then
+                    if boss and bossHrp and (bossHrp.Position - root.Position).Magnitude <= 500 then
+                        S.reenter, S.enteredAt = false, nil
                         FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
                         HoldPlayer(root)
                         Hit(char, boss, bossHrp)
                         return
                     end
+                    -- acabou de entrar na porta: espera o boss aparecer na arena
+                    if S.enteredAt and os.clock() - S.enteredAt < 12 then
+                        HoldPlayer(root)
+                        return
+                    end
+                    S.enteredAt = nil
                     ReleaseHold()
-                    local frame = BossDoorFrame()
                     if frame then
                         local p = InstPos(frame)
                         FlyTo(p, dt, MIRAGE_SPEED)
-                        if (root.Position - p).Magnitude <= 10 and firetouchinterest then
-                            pcall(function() firetouchinterest(root, frame, 0) firetouchinterest(root, frame, 1) end)
+                        if (root.Position - p).Magnitude <= 10 then
+                            if firetouchinterest then
+                                pcall(function() firetouchinterest(root, frame, 0) firetouchinterest(root, frame, 1) end)
+                            end
+                            S.enteredAt = os.clock()
                         end
-                    else
+                    elseif boss and bossHrp then
                         FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, MIRAGE_SPEED)
                     end
                     return
@@ -1837,10 +1850,122 @@ do
     end)
 end
 
--- >>> FIM DO QUE EXISTIA NO ARQUIVO ENVIADO <<<
--- O arquivo spectral_hub.txt que voce enviou estava cortado a partir de:
---     do
---         local NPC_1 = Vector3.new(-9479.2168, ...)
---         local BONE_MOBS = { { level = 1975, name = "Reborn Skeleton", ke...
--- Cole aqui, EXATAMENTE como esta no seu script original, tudo dessa linha "do local NPC_1" ate o final
--- (incluindo o "end" que fecha main() e a chamada final de main()).
+
+-- ===== AUTO FARM OSSO (reconstruido) =====
+do
+    local NPC_1 = Vector3.new(-9479.2168, 141.215088, 5566.09277)
+    local NPC_2 = Vector3.new(-9516.9931640625, 172.01779174804688, 6078.46533203125)
+    local BONE_MOBS = {
+        { level = 1975, name = "Reborn Skeleton", quest = "HauntedQuest1", qlvl = 1, npc = NPC_1 },
+        { level = 2000, name = "Demonic Soul",    quest = "HauntedQuest2", qlvl = 1, npc = NPC_2 },
+        { level = 2025, name = "Posessed Mummy",  quest = "HauntedQuest2", qlvl = 2, npc = NPC_2 },
+    }
+    local function MyLevel()
+        local d = player:FindFirstChild("Data")
+        local l = d and d:FindFirstChild("Level")
+        return l and tonumber(l.Value) or 0
+    end
+    local function PickMob()
+        local lvl, pick = MyLevel(), BONE_MOBS[1]
+        for _, m in ipairs(BONE_MOBS) do if lvl >= m.level then pick = m end end
+        return pick
+    end
+    local function HasQuest()
+        local gui = player:FindFirstChild("PlayerGui")
+        local main = gui and gui:FindFirstChild("Main")
+        local q = main and main:FindFirstChild("Quest")
+        return q ~= nil and q.Visible == true
+    end
+
+    -- comprar osso
+    task.spawn(function()
+        while Alive() do
+            task.wait(3)
+            if FarmFlags.Buy and not HW.active then
+                pcall(function()
+                    local cf = CommF()
+                    if cf then cf:InvokeServer("Bones", "Buy", 1, 1) end
+                end)
+            end
+        end
+    end)
+
+    task.spawn(function()
+        local wentToFarm, lastQuest, lastHit, lastAct = false, 0, 0, 0
+        while Alive() do
+            local dt = Run.Heartbeat:Wait()
+            local want = FarmFlags.Run and FarmMode == "Osso" and not HW.active
+                and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy()
+                and not WantRaidDone() and not FarmFlags.Pumpkin
+            TS.farm = want
+            if not want then
+                wentToFarm = false
+            else
+                local ok, err = pcall(function()
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root or hum.Health <= 0 then return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
+                    EquipSword()
+
+                    if not wentToFarm then
+                        FlyTo(FARM_POS, dt, MIRAGE_SPEED)
+                        if (root.Position - FARM_POS).Magnitude <= 15 then wentToFarm = true end
+                        return
+                    end
+
+                    local mob = PickMob()
+                    if not HasQuest() then
+                        ReleaseHold()
+                        local goal = mob.npc + Vector3.new(0, 3, 0)
+                        FlyTo(goal, dt, MIRAGE_SPEED)
+                        if (root.Position - goal).Magnitude <= 12 and os.clock() - lastQuest > 1.5 then
+                            lastQuest = os.clock()
+                            local cf = CommF()
+                            if cf then pcall(function() cf:InvokeServer("StartQuest", mob.quest, mob.qlvl) end) end
+                        end
+                        return
+                    end
+
+                    local best, bh, bd
+                    local folder = Enemies()
+                    if folder then
+                        for _, e in ipairs(folder:GetChildren()) do
+                            if e.Name == mob.name then
+                                local alive, hrp = IsAlive(e)
+                                if alive then
+                                    local d = (hrp.Position - root.Position).Magnitude
+                                    if not bd or d < bd then best, bh, bd = e, hrp, d end
+                                end
+                            end
+                        end
+                    end
+                    if not best then
+                        ReleaseHold()
+                        FlyTo(FARM_POS, dt, MIRAGE_SPEED)
+                        return
+                    end
+                    FlyTo(bh.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
+                    HoldPlayer(root)
+                    if os.clock() - lastHit >= 0.05 then
+                        lastHit = os.clock()
+                        AttackList(EnemiesInRange(root.Position, KILL_AURA_RANGE))
+                    end
+                    if os.clock() - lastAct >= 0.25 then
+                        lastAct = os.clock()
+                        local tool = GetSword()
+                        if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
+                    end
+                end)
+                if not ok then warn("[SpectralHub] erro no farm de osso:", err) end
+            end
+        end
+    end)
+end
+
+print("[SpectralHub] 5 - tudo carregado")
+end -- fim de main()
+
+local ok, err = pcall(main)
+if not ok then warn("[SpectralHub] ERRO FATAL:", err) end
