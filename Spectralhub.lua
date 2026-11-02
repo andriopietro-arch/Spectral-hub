@@ -118,7 +118,7 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Pumpkin=false, Halloween=false }
+local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false }
 local HW = { active = false, boss = false, window = 20 }   -- active: evento rolando (farm normal pausa); window: minutos apos a hora cheia
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
@@ -223,7 +223,6 @@ local function RaceBusy() return RaceFlags.Door or RaceFlags.Trial or RaceFlags.
 local function WantRaidDone() return FruitFlags.RaidDone end
 local function FarmActive()
     if HW.active then return false end
-    if FarmFlags.Pumpkin then return false end
     if RaceFlags.Train then return TS.farm end
     return FarmFlags.Run and FarmMode == "Osso"
 end
@@ -379,11 +378,7 @@ TabFarm:CreateToggle({
 })
 TabFarm:CreateSection("Evento")
 TabFarm:CreateToggle({
-    Name = "Auto Pumpkin Hunt (ab\u{F3}bora + Jack o' Lantern)", CurrentValue = FarmFlags.Pumpkin,
-    Callback = function(v) FarmFlags.Pumpkin = v end,
-})
-TabFarm:CreateToggle({
-    Name = "Auto Halloween (portas + boss Hellfire Gas)", CurrentValue = FarmFlags.Halloween,
+    Name = "Auto Halloween (ab\u{F3}bora + portas + boss)", CurrentValue = FarmFlags.Halloween,
     Callback = function(v) FarmFlags.Halloween = v end,
 })
 
@@ -884,7 +879,7 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or FarmFlags.Pumpkin or FarmFlags.Halloween or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Halloween or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -1896,7 +1891,7 @@ do
             local dt = Run.Heartbeat:Wait()
             local want = FarmFlags.Run and FarmMode == "Osso" and not HW.active
                 and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy()
-                and not WantRaidDone() and not FarmFlags.Pumpkin
+                and not WantRaidDone()
             TS.farm = want
             if not want then
                 wentToFarm = false
