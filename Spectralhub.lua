@@ -1648,37 +1648,40 @@ end)
 
 end
 -- ===== AUTO HALLOWEEN =====
+-- Fora do evento: farma aboboras e mata os NPCs de Halloween que spawnam.
+-- Evento (primeiros HW.window min de cada hora): portas + E + NPCs.
+-- Porta do boss spawnou: ignora tudo e vai matar o boss. Acabou: volta para as aboboras.
 do
-    local DOOR_START_INDEX = 135
-    local BOSS_DOOR_INDEX  = 123
-    local BOSS_NAME        = "Hellfire Gas"
-    local HOLD_E_TIME      = 2
-    local MOB_SEARCH_RADIUS = 350
-    local MARKERS = { "hallow", "pumpkin", "jack", "spook", "ghost", "skull", "halloween" }
+    local DOOR_START_INDEX, BOSS_DOOR_INDEX = 135, 123
+    local BOSS_NAME = "Hellfire Gas"
+    local HOLD_E_TIME, MOB_SEARCH_RADIUS = 2, 350
+    local DOOR_MARKERS    = { "hallow", "pumpkin", "jack", "spook", "ghost", "skull" }
+    local PUMPKIN_MARKERS = { "pumpkin", "abobora", "halloween" }
+    local ENEMY_MARKERS   = { "jack", "lantern", "pumpkin", "ghost", "skull", "spook", "hallow" }
 
+    local function hasAny(name, list)
+        name = name:lower()
+        for _, m in ipairs(list) do if name:find(m, 1, true) then return true end end
+        return false
+    end
+
+    -- ---------- portas ----------
     local function DoorFolder()
         local m = WS:FindFirstChild("Map")
         local d = m and m:FindFirstChild("Dressrosa")
         return d and d:FindFirstChild("Dressrosa")
     end
     local function IsHalloweenDoor(d)
-        local function has(n)
-            n = n:lower()
-            for _, m in ipairs(MARKERS) do if n:find(m, 1, true) then return true end end
-            return false
-        end
-        if has(d.Name) then return true end
+        if hasAny(d.Name, DOOR_MARKERS) then return true end
         for _, x in ipairs(d:GetDescendants()) do
-            if has(x.Name) then return true end
+            if hasAny(x.Name, DOOR_MARKERS) then return true end
         end
         return false
     end
     local function HalloweenDoors()
-        local out = {}
-        local f = DoorFolder()
+        local out, f = {}, DoorFolder()
         if not f then return out end
-        local kids = f:GetChildren()
-        for i, d in ipairs(kids) do
+        for i, d in ipairs(f:GetChildren()) do
             if i == DOOR_START_INDEX or (i ~= BOSS_DOOR_INDEX and IsHalloweenDoor(d)) then
                 local p = InstPos(d)
                 if p then table.insert(out, { idx = i, inst = d, pos = p }) end
@@ -1686,27 +1689,44 @@ do
         end
         return out
     end
+    local function BossDoorFrame()
+        local f = DoorFolder()
+        local d = f and f:GetChildren()[BOSS_DOOR_INDEX]
+        return d and d:FindFirstChild("Frame")
+    end
     local function BossModel()
         local e = Enemies()
         local b = e and e:FindFirstChild(BOSS_NAME)
         local alive, hrp = IsAlive(b)
         if alive then return b, hrp end
     end
-    local function BossDoorFrame()
-        local f = DoorFolder()
-        local d = f and f:GetChildren()[BOSS_DOOR_INDEX]
-        return d and d:FindFirstChild("Frame")
-    end
+
+    -- ---------- interacao ----------
     local function PressE(down)
         pcall(function() VIM:SendKeyEvent(down, Enum.KeyCode.E, false, game) end)
     end
     local function FirePrompts(inst)
         if not fireproximityprompt then return end
+        if inst:IsA("ProximityPrompt") then pcall(fireproximityprompt, inst) end
         for _, x in ipairs(inst:GetDescendants()) do
             if x:IsA("ProximityPrompt") then pcall(fireproximityprompt, x) end
         end
     end
-    local function NearestMob(origin, radius)
+    local function FireClicks(inst)
+        if not fireclickdetector then return end
+        if inst:IsA("ClickDetector") then pcall(fireclickdetector, inst) end
+        for _, x in ipairs(inst:GetDescendants()) do
+            if x:IsA("ClickDetector") then pcall(fireclickdetector, x) end
+        end
+    end
+    local function Hit(char, model, hrp)
+        AttackList({ { model = model, hrp = hrp } })
+        local tool = GetSword()
+        if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
+    end
+
+    -- ---------- NPCs ----------
+    local function NearestMob(origin, radius)       -- qualquer inimigo perto (fase do evento)
         local best, bd, bh
         local f = Enemies()
         if not f then return end
@@ -1721,16 +1741,95 @@ do
         end
         return best, bh
     end
-    local function Hit(char, model, hrp)
-        AttackList({ { model = model, hrp = hrp } })
-        local tool = GetSword()
-        if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
+    local function HalloweenMob(origin)             -- NPC de Halloween em qualquer lugar (fase das aboboras)
+        local best, bd, bh
+        local f = Enemies()
+        if not f then return end
+        for _, e in ipairs(f:GetChildren()) do
+            if e.Name ~= BOSS_NAME and hasAny(e.Name, ENEMY_MARKERS) then
+                local alive, hrp = IsAlive(e)
+                if alive then
+                    local d = (hrp.Position - origin).Magnitude
+                    if not bd or d < bd then best, bd, bh = e, d, hrp end
+                end
+            end
+        end
+        return best, bh
+    end
+
+    -- ---------- aboboras ----------
+    local pumpkins = {}                                   -- [instancia] = true
+    local pumpkinBad = setmetatable({}, { __mode = "k" }) -- instancia -> ignorar ate
+    local function InCharacter(x)
+        local m = x:FindFirstAncestorWhichIsA("Model")
+        while m do
+            if m:FindFirstChildOfClass("Humanoid") then return true end
+            m = m.Parent and m.Parent:FindFirstAncestorWhichIsA("Model")
+        end
+        return false
+    end
+    local function Consider(x)
+        local cand
+        if x:IsA("ClickDetector") or x:IsA("ProximityPrompt") then
+            local p = x.Parent
+            if not p then return end
+            if not (hasAny(p.Name, PUMPKIN_MARKERS) or (p.Parent and hasAny(p.Parent.Name, PUMPKIN_MARKERS))) then return end
+            cand = p
+        elseif x:IsA("Model") or x:IsA("BasePart") then
+            if not hasAny(x.Name, PUMPKIN_MARKERS) then return end
+            cand = x
+        else
+            return
+        end
+        local en, df = Enemies(), DoorFolder()
+        if (en and cand:IsDescendantOf(en)) or (df and cand:IsDescendantOf(df)) then return end
+        if InCharacter(cand) then return end
+        local a = cand
+        while a and a ~= WS do
+            if pumpkins[a] then return end
+            a = a.Parent
+        end
+        pumpkins[cand] = true
+    end
+    task.spawn(function()
+        local n = 0
+        for _, x in ipairs(WS:GetDescendants()) do
+            if not Alive() then return end
+            pcall(Consider, x)
+            n += 1
+            if n % 3000 == 0 then task.wait() end
+        end
+        local c, shown = 0, 0
+        for inst in pairs(pumpkins) do
+            c += 1
+            if shown < 8 then shown += 1 print("[SpectralHub] abobora:", inst:GetFullName()) end
+        end
+        print("[SpectralHub] Halloween: aboboras encontradas no mapa agora =", c)
+    end)
+    local addConn
+    addConn = WS.DescendantAdded:Connect(function(x)
+        if not Alive() then addConn:Disconnect() return end
+        pcall(Consider, x)
+    end)
+    local function NextPumpkin(origin)
+        local best, bp, bd
+        for inst in pairs(pumpkins) do
+            if not inst.Parent then
+                pumpkins[inst] = nil
+            elseif not (pumpkinBad[inst] and pumpkinBad[inst] > os.clock()) then
+                local p = InstPos(inst)
+                if p then
+                    local d = (p - origin).Magnitude
+                    if not bd or d < bd then best, bp, bd = inst, p, d end
+                end
+            end
+        end
+        return best, bp
     end
 
     local S = { visited = {}, cur = nil, dwell = 0, pressed = false, reenter = false, lastHour = -1,
-                bossKilled = false, sawBoss = false, enteredAt = nil }
+                bossKilled = false, sawBoss = false, enteredAt = nil, pk = nil, pkT = 0, pkAct = 0 }
 
-    -- morreu: na volta, precisa entrar de novo na porta do boss
     local function HookDeath(char)
         local hum = char:WaitForChild("Humanoid", 10)
         if hum then hum.Died:Connect(function() S.reenter = true end) end
@@ -1739,9 +1838,17 @@ do
     player.CharacterAdded:Connect(function(c) task.spawn(HookDeath, c) end)
 
     task.spawn(function()
+        local lastHit = 0
         while Alive() do
             local dt = Run.Heartbeat:Wait()
             local ok, err = pcall(function()
+                HW.active = FarmFlags.Halloween      -- ligado: o farm de osso fica pausado
+                if not FarmFlags.Halloween then
+                    HW.boss = false
+                    if S.pressed then PressE(false); S.pressed = false end
+                    return
+                end
+
                 local t = os.date("*t")
                 if t.hour ~= S.lastHour then
                     S.lastHour = t.hour
@@ -1753,15 +1860,9 @@ do
                 local inWindow = t.min < HW.window
                 if boss then S.sawBoss = true
                 elseif S.sawBoss and not S.reenter then S.bossKilled, S.sawBoss = true, false end
-                -- prioridade maxima: porta do boss spawnou (ou boss vivo) e ainda nao foi morto nesta hora
-                local wantBoss = FarmFlags.Halloween and not S.bossKilled
-                    and (boss ~= nil or (frame ~= nil and inWindow))
+                local wantBoss = not S.bossKilled and (boss ~= nil or (frame ~= nil and inWindow))
                 HW.boss = wantBoss and true or false
-                HW.active = FarmFlags.Halloween and (inWindow or boss ~= nil)
-                if not HW.active then
-                    if S.pressed then PressE(false); S.pressed = false end
-                    return
-                end
+                local eventOn = inWindow or boss ~= nil
 
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1770,8 +1871,9 @@ do
                 if hum.SeatPart then JumpOffBoat(hum) return end
                 EquipSword()
 
-                -- 1) BOSS: prioridade maxima, ignora portas, NPCs e todo o resto
+                -- 1) BOSS: prioridade maxima
                 if wantBoss then
+                    if S.pressed then PressE(false); S.pressed = false end
                     if boss and bossHrp and (bossHrp.Position - root.Position).Magnitude <= 500 then
                         S.reenter, S.enteredAt = false, nil
                         FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
@@ -1779,7 +1881,6 @@ do
                         Hit(char, boss, bossHrp)
                         return
                     end
-                    -- acabou de entrar na porta: espera o boss aparecer na arena
                     if S.enteredAt and os.clock() - S.enteredAt < 12 then
                         HoldPlayer(root)
                         return
@@ -1801,7 +1902,42 @@ do
                     return
                 end
 
-                -- 2) NPC que spawnou perto de mim/da porta
+                -- 2) FORA DO EVENTO: aboboras + NPCs de Halloween
+                if not eventOn then
+                    if S.pressed then PressE(false); S.pressed = false end
+                    local mob, mobHrp = HalloweenMob(root.Position)
+                    if mob then
+                        FlyTo(mobHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
+                        HoldPlayer(root)
+                        Hit(char, mob, mobHrp)
+                        return
+                    end
+                    ReleaseHold()
+                    local inst, p = NextPumpkin(root.Position)
+                    if not inst then
+                        S.pk = nil
+                        Notify("Procurando aboboras...")
+                        return
+                    end
+                    local target = p + Vector3.new(0, 3, 0)
+                    FlyTo(target, dt, MIRAGE_SPEED)
+                    if (root.Position - target).Magnitude <= 8 then
+                        if S.pk ~= inst then S.pk, S.pkT = inst, os.clock() end
+                        if os.clock() - S.pkAct >= 0.3 then
+                            S.pkAct = os.clock()
+                            FirePrompts(inst)
+                            FireClicks(inst)
+                            TouchInst(inst, root)
+                        end
+                        if os.clock() - S.pkT > 6 then          -- nao sumiu: pula e volta depois
+                            pumpkinBad[inst] = os.clock() + 30
+                            S.pk = nil
+                        end
+                    end
+                    return
+                end
+
+                -- 3) EVENTO: NPC perto da porta
                 local mob, mobHrp = NearestMob(root.Position, MOB_SEARCH_RADIUS)
                 if mob and S.cur and S.visited[S.cur.idx] then
                     FlyTo(mobHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
@@ -1811,10 +1947,9 @@ do
                 end
                 ReleaseHold()
 
-                -- 3) ciclo de portas de Halloween
+                -- 4) EVENTO: ciclo de portas (E por 2s em cada)
                 local doors = HalloweenDoors()
                 if #doors == 0 then Notify("Nenhuma porta de Halloween encontrada.") return end
-
                 if not S.cur or S.visited[S.cur.idx] then
                     local best, bd
                     for _, d in ipairs(doors) do
@@ -1823,10 +1958,9 @@ do
                             if not bd or dd < bd then best, bd = d, dd end
                         end
                     end
-                    if not best then S.visited = {} return end   -- deu a volta: recomeça
+                    if not best then S.visited = {} return end
                     S.cur, S.dwell, S.pressed = best, 0, false
                 end
-
                 local target = S.cur.pos + Vector3.new(0, 3, 0)
                 FlyTo(target, dt, MIRAGE_SPEED)
                 if (root.Position - target).Magnitude <= 8 then
@@ -1844,7 +1978,6 @@ do
         end
     end)
 end
-
 
 -- ===== AUTO FARM OSSO (reconstruido) =====
 do
