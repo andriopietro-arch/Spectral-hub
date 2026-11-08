@@ -1,5 +1,9 @@
 --[[
-    SpectralHub v7.9
+    SpectralHub v8.0
+    - Auto Dungeon (aba Auto Farm): mata todos os NPCs vivos num raio de 150 studs, voa ate o mais
+      proximo e, quando a area limpa, vai para workspace.Map.Dungeon[fase].ExitTeleporter.Root.
+      A fase atual e a porta mais proxima ainda nao usada; ao atravessar, marca a porta e passa
+      para a proxima. Tambem ataca enquanto voa. Prioridade: Fabrica > Dungeon > Pumpkin > osso.
     - Auto Fabrica (aba Auto Farm): quando chega "THE FACTORY HAS BEEN BREACHED", voa ate
       workspace.Enemies.Core.HumanoidRootPart e equipa a espada. Termina por mensagem de fim,
       Core sumir/morrer ou 6 min. Com prioridade sobre Pumpkin Hunt e farm de osso.
@@ -69,7 +73,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.9",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v8.0",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -123,8 +127,8 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false, Factory=false }
-local HW = { active = false, factory = false }
+local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false, Factory=false, Dungeon=false }
+local HW = { active = false, factory = false, dungeon = false }
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -386,6 +390,10 @@ TabFarm:CreateToggle({
 TabFarm:CreateToggle({
     Name = "Auto F\u{E1}brica (Core)", CurrentValue = FarmFlags.Factory,
     Callback = function(v) FarmFlags.Factory = v end,
+})
+TabFarm:CreateToggle({
+    Name = "Auto Dungeon", CurrentValue = FarmFlags.Dungeon,
+    Callback = function(v) FarmFlags.Dungeon = v end,
 })
 
 TabFruit:CreateSection("Frutas")
@@ -910,7 +918,7 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or FarmFlags.Halloween or HW.factory or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Halloween or HW.factory or HW.dungeon or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -2097,8 +2105,8 @@ do
     task.spawn(function()
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            HW.active = FarmFlags.Halloween or HW.factory == true
-            if FarmFlags.Halloween and not HW.factory then
+            HW.active = FarmFlags.Halloween or HW.factory == true or HW.dungeon == true
+            if FarmFlags.Halloween and not HW.factory and not HW.dungeon then
                 ScanNil()
                 local ok, err = pcall(function()
                     local char = player.Character
@@ -2253,6 +2261,203 @@ do
                     end
                 end)
                 if not ok then warn("[SpectralHub] erro na Fabrica:", err) end
+            end
+        end
+    end)
+end
+
+-- ===== AUTO DUNGEON =====
+-- Mata todos os NPCs vivos num raio de HIT_RADIUS e voa ate o mais proximo. Quando a area
+-- fica limpa por NO_ENEMY_DELAY, vai para Map.Dungeon[fase].ExitTeleporter.Root. A fase atual
+-- e a porta mais proxima ainda nao usada; ao atravessar (mudar MOVED_DIST de posicao), marca a
+-- porta como feita e passa para a proxima. Fora da dungeon (porta a mais de ACTIVE_DIST) fica parado.
+do
+    local DUNGEON_FLY    = 300
+    local ENEMY_RANGE    = 300   -- inimigos ate aqui impedem de ir para a porta
+    local HIT_RADIUS     = 150   -- raio em que todos os NPCs levam o golpe
+    local HIT_INTERVAL   = 0.1
+    local HOVER          = 9
+    local NO_ENEMY_DELAY = 1.5
+    local DOOR_ARRIVE    = 12
+    local DOOR_WAIT      = 6
+    local MOVED_DIST     = 60
+    local ACTIVE_DIST    = 1500
+    local TARGET_TIMEOUT = 25
+    local TARGET_IGNORE  = 20
+
+    local doneDoors = {}
+    local skip = {}
+
+    local function DungeonEnemy(e)
+        if e.Name == "Core" then return false end
+        return IsAlive(e)
+    end
+
+    local function NearestEnemy(pos)
+        local folder = Enemies()
+        if not folder then return nil end
+        local best, bd
+        for _, e in ipairs(folder:GetChildren()) do
+            local alive, hrp = DungeonEnemy(e)
+            if alive and not (skip[e] and skip[e] > os.clock()) then
+                local d = (hrp.Position - pos).Magnitude
+                if d <= ENEMY_RANGE and (not bd or d < bd) then best, bd = e, d end
+            end
+        end
+        return best, bd
+    end
+
+    local function DungeonAttack(pos)
+        local folder = Enemies()
+        if not folder then return end
+        local list = {}
+        for _, e in ipairs(folder:GetChildren()) do
+            local alive, hrp = DungeonEnemy(e)
+            if alive then
+                local d = (hrp.Position - pos).Magnitude
+                if d <= HIT_RADIUS then table.insert(list, { model = e, hrp = hrp, d = d }) end
+            end
+        end
+        if #list == 0 then return end
+        table.sort(list, function(a, b) return a.d < b.d end)
+        AttackList(list)
+    end
+
+    local function StageDoor(stage)
+        local ex = stage:FindFirstChild("ExitTeleporter")
+        if not ex then return nil end
+        return ex:FindFirstChild("Root") or ex:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function Scan(pos)
+        local map = WS:FindFirstChild("Map")
+        local folder = map and map:FindFirstChild("Dungeon")
+        if not folder then return nil end
+        local bestStage, bestDoor, bd
+        for _, st in ipairs(folder:GetChildren()) do
+            local door = StageDoor(st)
+            if door and not doneDoors[door] then
+                local d = (door.Position - pos).Magnitude
+                if not bd or d < bd then bestStage, bestDoor, bd = st, door, d end
+            end
+        end
+        return bestStage, bestDoor, bd
+    end
+
+    local function CurrentStage(pos)
+        local st, door, d = Scan(pos)
+        if not door and next(doneDoors) then
+            doneDoors = {}               -- todas feitas: recomeca (nova run)
+            st, door, d = Scan(pos)
+        end
+        return st, door, d
+    end
+
+    local function TouchDoor(root, door)
+        if firetouchinterest then
+            pcall(function()
+                firetouchinterest(root, door, 0)
+                firetouchinterest(root, door, 1)
+            end)
+        end
+        if fireproximityprompt and door.Parent then
+            for _, d in ipairs(door.Parent:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then pcall(fireproximityprompt, d) end
+            end
+        end
+    end
+
+    task.spawn(function()
+        local lastEquip, lastHit = 0, 0
+        local noEnemySince, idleSince = nil, nil
+        local target, targetSince = nil, 0
+        local doorTry, lastStageName = nil, nil
+
+        while Alive() do
+            local dt = Run.Heartbeat:Wait()
+            HW.dungeon = FarmFlags.Dungeon
+            local want = FarmFlags.Dungeon and not HW.factory
+                and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy()
+                and not WantRaidDone()
+            if want then
+                local ok, err = pcall(function()
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root or hum.Health <= 0 then return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
+                    local pos = root.Position
+
+                    if os.clock() - lastEquip > 1 then
+                        lastEquip = os.clock()
+                        EquipSword()
+                    end
+
+                    -- ataca todos os NPCs ao redor o tempo todo (inclusive voando)
+                    if os.clock() - lastHit >= HIT_INTERVAL then
+                        lastHit = os.clock()
+                        DungeonAttack(pos)
+                    end
+
+                    local enemy = NearestEnemy(pos)
+                    if enemy then
+                        idleSince, noEnemySince, doorTry = nil, nil, nil
+                        if target ~= enemy then target, targetSince = enemy, os.clock() end
+                        if os.clock() - targetSince > TARGET_TIMEOUT then
+                            skip[enemy] = os.clock() + TARGET_IGNORE
+                            print("[Dungeon] inimigo travado, ignorando:", enemy.Name)
+                            target = nil
+                            return
+                        end
+                        local _, ehrp = DungeonEnemy(enemy)
+                        FlyTo(ehrp.Position + Vector3.new(0, HOVER, 0), dt, DUNGEON_FLY)
+                        return
+                    end
+
+                    target = nil
+                    noEnemySince = noEnemySince or os.clock()
+                    if os.clock() - noEnemySince < NO_ENEMY_DELAY then return end
+
+                    local stage, door, dist = CurrentStage(pos)
+                    if not door or dist > ACTIVE_DIST then
+                        idleSince = idleSince or os.clock()
+                        if os.clock() - idleSince > 10 then doneDoors = {} end
+                        return
+                    end
+                    idleSince = nil
+
+                    if stage.Name ~= lastStageName then
+                        lastStageName = stage.Name
+                        print("[Dungeon] fase atual:", stage.Name)
+                    end
+
+                    if not doorTry or doorTry.door ~= door then
+                        doorTry = { door = door }
+                    end
+
+                    FlyTo(door.Position, dt, DUNGEON_FLY)
+                    local dd = (door.Position - pos).Magnitude
+                    if not doorTry.arrivedAt then
+                        if dd <= DOOR_ARRIVE then
+                            doorTry.arrivedAt = os.clock()
+                            doorTry.arrivePos = pos
+                            print("[Dungeon] na porta da fase", stage.Name)
+                        end
+                    else
+                        TouchDoor(root, door)
+                        if (pos - doorTry.arrivePos).Magnitude > MOVED_DIST then
+                            doneDoors[door] = true
+                            print("[Dungeon] atravessou a fase", stage.Name)
+                            doorTry, noEnemySince = nil, nil
+                        elseif os.clock() - doorTry.arrivedAt > DOOR_WAIT then
+                            print("[Dungeon] porta nao abriu, procurando inimigos de novo")
+                            doorTry, noEnemySince = nil, nil
+                        end
+                    end
+                end)
+                if not ok then warn("[SpectralHub] erro na Dungeon:", err) end
+            else
+                target, noEnemySince, doorTry = nil, nil, nil
             end
         end
     end)
