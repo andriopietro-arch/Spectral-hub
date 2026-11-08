@@ -1,16 +1,15 @@
-
 --[[
-    SpectralHub v7.8
-    - FlyTo: se o TP nao valeu (servidor te devolveu / voce nao esta onde devia),
-      voa normal por 15s em vez de teleportar, depois tenta o TP de novo
+    SpectralHub v7.9
+    - Auto Fabrica (aba Auto Farm): quando chega "THE FACTORY HAS BEEN BREACHED", voa ate
+      workspace.Enemies.Core.HumanoidRootPart e equipa a espada. Termina por mensagem de fim,
+      Core sumir/morrer ou 6 min. Com prioridade sobre Pumpkin Hunt e farm de osso.
+    - FlyTo detecta TP que nao valeu (voce fica longe do ponto logo depois): desliga o TP por 15s e voa
     - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia) restaurados
     - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
       troca de abobora no mesmo frame em que ela some; ignora aboboras de enfeite;
       Jack o' Lantern tem prioridade (morreu / parou de tomar dano = volta pras aboboras)
     - REMOVIDO: auto porta + boss do Halloween
     - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
-    - Auto treinar raca: farma osso no ponto de farm -> V4 ativa: espera no ponto alto -> V4 acabou:
-      tenta comprar upgrade e volta a farmar (sem raid/fragmentos)
     - Auto farm osso / treino: ao ligar vao primeiro para o ponto de farm (-9517, 142, 5543)
     - Raid: nao puxa/trava mais os NPCs (dessincronizava com o servidor)
     - Iniciar raid: puxa Map["Boat Castle"].MapTeleportA.Hitbox para o personagem antes de clicar no botao
@@ -70,7 +69,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.8",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.9",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -124,8 +123,8 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false }   -- Halloween = Auto Pumpkin Hunt
-local HW = { active = false }   -- active: Pumpkin Hunt ligado (farm de osso pausa)
+local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false, Factory=false }
+local HW = { active = false, factory = false }
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -134,12 +133,11 @@ local CHIP_NAME = "Ice"
 local ClearESP
 
 local TS = { farm = false, waiting = false }
-local FARM_POS = Vector3.new(-9517, 142, 5543)    -- ponto de farm do osso
-local WAIT_POS = Vector3.new(-9523, 3933, 6727)   -- onde espera a V4 acabar
-local TP_DISTANCE = 750                           -- voa ate faltar 750 studs, ai teleporta para o destino
+local FARM_POS = Vector3.new(-9517, 142, 5543)
+local WAIT_POS = Vector3.new(-9523, 3933, 6727)
+local TP_DISTANCE = 750
 
 local HttpService = game:GetService("HttpService")
--- um arquivo por conta: conta nova (sem arquivo) começa com tudo desativado
 local CONFIG_FILE = "SpectralHub_config_" .. tostring(player.UserId) .. ".json"
 
 local TOOL_MAP = { ["Espada"] = "Sword", ["Arma"] = "Gun", ["Fruta"] = "Blox Fruit", ["Soco"] = "Melee" }
@@ -348,7 +346,7 @@ local function MakeTab(name, icon)
     if ok and t then return t end
     return Window:CreateTab(name, 4483362458)
 end
-local TabFarm  = MakeTab("Auto Farm",         "warehouse")  -- celeiro/armazem
+local TabFarm  = MakeTab("Auto Farm",         "warehouse")
 local TabFruit = MakeTab("Fruta e Raid",      "apple")
 local TabRace  = MakeTab("Ra\u{E7}a V4 / Miragem", "dna")
 local TabSea   = MakeTab("Sea Event",         "waves")
@@ -384,6 +382,10 @@ TabFarm:CreateSection("Evento")
 TabFarm:CreateToggle({
     Name = "Auto Pumpkin Hunt (ab\u{F3}boras + Jack o' Lantern)", CurrentValue = FarmFlags.Halloween,
     Callback = function(v) FarmFlags.Halloween = v end,
+})
+TabFarm:CreateToggle({
+    Name = "Auto F\u{E1}brica (Core)", CurrentValue = FarmFlags.Factory,
+    Callback = function(v) FarmFlags.Factory = v end,
 })
 
 TabFruit:CreateSection("Frutas")
@@ -684,45 +686,49 @@ local function JumpOffBoat(hum)
 end
 
 -- ===== FLYTO COM DETECCAO DE TP QUE NAO VALEU =====
-local TP_FAIL_DIST = 40      -- depois do TP, se estiver a mais que isso do ponto = TP falhou
-local TP_CHECK_TIME = 1      -- tempo (s) depois do TP em que a checagem vale
-local NO_TP_TIME = 15        -- tempo (s) voando normal depois de um TP que falhou
-local lastTp, noTpUntil = nil, 0
-
 local function MyRoot() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
-local function FlyTo(pos, dt, speed)
-    local r = MyRoot() if not r then return end
-    local now = os.clock()
+local FlyTo, TeleportTo
+do
+    local TP_FAIL_DIST = 40
+    local TP_CHECK_TIME = 1
+    local NO_TP_TIME = 15
+    local lastTp, noTpUntil = nil, 0
 
-    -- o ultimo TP valeu? se o servidor te devolveu / voce nao esta onde devia, voa em vez de teleportar
-    if lastTp then
-        if lastTp.root ~= r or now - lastTp.t > TP_CHECK_TIME then
-            lastTp = nil
-        elseif (r.Position - lastTp.pos).Magnitude > TP_FAIL_DIST then
-            noTpUntil = now + NO_TP_TIME
-            lastTp = nil
-            print("[SpectralHub] TP nao valeu, voando por " .. NO_TP_TIME .. "s")
+    FlyTo = function(pos, dt, speed)
+        local r = MyRoot() if not r then return end
+        local now = os.clock()
+
+        if lastTp then
+            if lastTp.root ~= r or now - lastTp.t > TP_CHECK_TIME then
+                lastTp = nil
+            elseif (r.Position - lastTp.pos).Magnitude > TP_FAIL_DIST then
+                noTpUntil = now + NO_TP_TIME
+                lastTp = nil
+                print("[SpectralHub] TP nao valeu, voando por " .. NO_TP_TIME .. "s")
+            end
         end
+
+        local off = pos - r.Position
+        local d = off.Magnitude
+        if d > 1 and d <= TP_DISTANCE and now >= noTpUntil then
+            r.CFrame = CFrame.new(pos) * r.CFrame.Rotation
+            r.AssemblyLinearVelocity = Vector3.zero
+            lastTp = { pos = pos, t = now, root = r }
+            return
+        end
+        if d > 1 then
+            lastTp = nil
+            r.CFrame = CFrame.new(r.Position + off.Unit * math.min(d, speed * dt)) * r.CFrame.Rotation
+        end
+        r.AssemblyLinearVelocity = Vector3.zero
     end
 
-    local off = pos - r.Position
-    local d = off.Magnitude
-    if d > 1 and d <= TP_DISTANCE and now >= noTpUntil then
+    TeleportTo = function(pos)
+        local r = MyRoot() if not r then return end
+        lastTp = nil
         r.CFrame = CFrame.new(pos) * r.CFrame.Rotation
         r.AssemblyLinearVelocity = Vector3.zero
-        lastTp = { pos = pos, t = now, root = r }
-        return
     end
-    if d > 1 then
-        r.CFrame = CFrame.new(r.Position + off.Unit * math.min(d, speed * dt)) * r.CFrame.Rotation
-    end
-    r.AssemblyLinearVelocity = Vector3.zero
-end
-local function TeleportTo(pos)
-    local r = MyRoot() if not r then return end
-    lastTp = nil
-    r.CFrame = CFrame.new(pos) * r.CFrame.Rotation
-    r.AssemblyLinearVelocity = Vector3.zero
 end
 local function SitOnSeat(seat, hum)
     local r = MyRoot() if not r then return end
@@ -904,7 +910,7 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or FarmFlags.Halloween or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Halloween or HW.factory or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -1782,8 +1788,6 @@ do
     end)
 
     -- ---------- Stats do servidor ----------
-    -- Numero = quantas luas faltam para a cheia (0 = cheia agora).
-    -- IDs de memoria: se aparecer "fase desconhecida", me mande o id que aparece no label.
     local MOON_LEFT = {
         ["9709149431"] = 0,
         ["9709149052"] = 1,
@@ -1828,21 +1832,18 @@ do
 end
 
 -- ===== AUTO PUMPKIN HUNT =====
--- So aboboras dentro de workspace.PumpkinHunt e visiveis. Voa ate a mais proxima e bate nela.
--- Sumiu: troca no mesmo frame. Enfeite (bate e nada muda): ignora por 5 min.
--- Jack o' Lantern tem prioridade; morreu ou parou de tomar dano = volta pras aboboras.
 do
     local PUMPKIN_FLY = 300
     local HIT_RANGE = 8
     local HIT_INTERVAL = 0.15
-    local PROBE_TIME = 3              -- batendo esse tempo (e hits minimos) sem nada mudar = enfeite
+    local PROBE_TIME = 3
     local PROBE_MIN_HITS = 10
     local FAKE_IGNORE_TIME = 300
     local TRAVEL_TIMEOUT = 6
     local JACK_NO_DAMAGE_TIMEOUT = 1.5
     local JACK_IGNORE_TIME = 6
     local NIL_SCAN_INTERVAL = 3
-    local USE_NIL_PUMPKINS = false    -- true = tambem usa aboboras sem pai (pode ir em nao spawnadas)
+    local USE_NIL_PUMPKINS = false
 
     local function PPos(i)
         local ok, pos = pcall(InstPos, i)
@@ -1854,7 +1855,6 @@ do
         return inst:FindFirstChildWhichIsA("BasePart", true)
     end
 
-    -- ---------- interacao ----------
     local function FirePrompts(inst)
         if not fireproximityprompt then return end
         if inst:IsA("ProximityPrompt") then pcall(fireproximityprompt, inst) end
@@ -1881,8 +1881,8 @@ do
         local part = FirstPart(inst) or inst
         if ra then pcall(function() ra:FireServer(0.36666667461395, 1) end) end
         if rh then
-            pcall(function() rh:FireServer(inst) end)                                 -- formato do Cobalt
-            pcall(function() rh:FireServer(part, { { inst, part } }, ATTACK_KEY) end) -- formato do NPC
+            pcall(function() rh:FireServer(inst) end)
+            pcall(function() rh:FireServer(part, { { inst, part } }, ATTACK_KEY) end)
         end
         FirePrompts(inst)
         FireClicks(inst)
@@ -1896,7 +1896,6 @@ do
         SwingSword()
     end
 
-    -- ---------- Jack o' Lantern ----------
     local JACK_NAME, JACK_HEIGHT = "Jack o' Lantern", 15
     local deadJack = setmetatable({}, { __mode = "k" })
     local hookedJack = setmetatable({}, { __mode = "k" })
@@ -1938,7 +1937,7 @@ do
                             if hum.Health < st.hp then st.lastDmg = now end
                             st.hp = hum.Health
                             if (hrp.Position - myPos).Magnitude > JACK_HEIGHT + 12 then
-                                st.lastDmg = now      -- voo ate ele nao conta como "sem dano"
+                                st.lastDmg = now
                             end
                             if now - st.lastDmg > JACK_NO_DAMAGE_TIMEOUT then
                                 st.ignore = now + JACK_IGNORE_TIME
@@ -1954,13 +1953,11 @@ do
         return nil
     end
 
-    -- ---------- aboboras ----------
     local function IsPumpkinName(name)
         return name ~= "PumpkinHunt" and name:lower():find("pumpkin", 1, true) ~= nil
     end
     local function HuntFolder() return WS:FindFirstChild("PumpkinHunt") end
 
-    -- esta de verdade spawnada? (no mundo + alguma peca visivel)
     local function IsLive(inst)
         if inst.Parent == nil then return USE_NIL_PUMPKINS end
         local folder = HuntFolder()
@@ -2004,7 +2001,7 @@ do
         if d:FindFirstAncestor("Enemies") then return end
         if d.Parent ~= nil then
             local folder = HuntFolder()
-            if not folder or not d:IsDescendantOf(folder) then return end   -- enfeite do mapa
+            if not folder or not d:IsDescendantOf(folder) then return end
         end
         local t = Top(d)
         if not gone[t] then known[t] = true end
@@ -2081,7 +2078,6 @@ do
         return best
     end
 
-    -- ---------- estado do alvo atual ----------
     local curPumpkin, snap, selAt, arriveAt, hits = nil, nil, 0, nil, 0
     local ancConn, vanished = nil, false
     local lastHit = 0
@@ -2101,8 +2097,8 @@ do
     task.spawn(function()
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            HW.active = FarmFlags.Halloween      -- ligado: o farm de osso fica pausado
-            if FarmFlags.Halloween then
+            HW.active = FarmFlags.Halloween or HW.factory == true
+            if FarmFlags.Halloween and not HW.factory then
                 ScanNil()
                 local ok, err = pcall(function()
                     local char = player.Character
@@ -2111,7 +2107,6 @@ do
                     if not hum or not root or hum.Health <= 0 then ClearPumpkin() return end
                     if hum.SeatPart then JumpOffBoat(hum) return end
 
-                    -- 1) Jack o' Lantern: prioridade
                     local jack, jackHrp = FindJack(root.Position)
                     if jack then
                         ClearPumpkin()
@@ -2123,7 +2118,6 @@ do
                         return
                     end
 
-                    -- 2) abobora atual sumiu / ficou invisivel? troca no mesmo frame
                     if curPumpkin and (vanished or Ignored(curPumpkin)
                         or not IsLive(curPumpkin) or Changed(curPumpkin, snap)) then
                         gone[curPumpkin] = true
@@ -2173,6 +2167,97 @@ do
     end)
 end
 
+-- ===== AUTO FABRICA =====
+-- Mensagem de invasao -> voa ate workspace.Enemies.Core.HumanoidRootPart e equipa a espada.
+-- Termina quando o Core some/morre, quando chega a mensagem de fim, ou apos MAX_TIME.
+do
+    local START_TEXT = "FACTORY HAS BEEN BREACHED"
+    local END_WORDS = { "DESTROYED", "NEUTRALIZED", "SECURED", "SHUT DOWN", "SHUTDOWN", "DEACTIVATED", "COMPLETE", "DEFEATED" }
+    local FACTORY_FLY = 300
+    local ARRIVE_DIST = 15
+    local MAX_TIME = 360
+    local MISSING_GRACE = 3
+
+    local running, startedAt, seen, missingSince = false, 0, false, nil
+
+    local function Stop(reason)
+        if running then print("[Fabrica] terminou:", reason) end
+        running, seen, missingSince = false, false, nil
+        HW.factory = false
+    end
+
+    local function OnMessage(kind, msg)
+        if not Alive() then return end
+        if kind ~= "ChatNotification" or type(msg) ~= "string" then return end
+        local up = msg:upper()
+        if up:find("FACTORY", 1, true) or up:find("POISON", 1, true) then
+            print("[Fabrica] mensagem:", msg)
+        end
+        if not FarmFlags.Factory then return end
+        if up:find(START_TEXT, 1, true) then
+            running, startedAt, seen, missingSince = true, os.clock(), false, nil
+            print("[Fabrica] fabrica invadida, indo para o Core")
+            NotifyNow("F\u{E1}brica invadida! Indo para o Core.")
+        elseif running and up:find("FACTORY", 1, true) then
+            for _, w in ipairs(END_WORDS) do
+                if up:find(w, 1, true) then Stop("mensagem de fim") return end
+            end
+        end
+    end
+
+    task.spawn(function()
+        local ev
+        while Alive() and not ev do
+            ev = CommE()
+            if not ev then task.wait(1) end
+        end
+        if not ev then return end
+        ev.OnClientEvent:Connect(function(...) pcall(OnMessage, ...) end)
+    end)
+
+    task.spawn(function()
+        while Alive() do
+            local dt = Run.Heartbeat:Wait()
+            if running and not FarmFlags.Factory then Stop("toggle desligado") end
+            HW.factory = running
+            if running then
+                local ok, err = pcall(function()
+                    if os.clock() - startedAt > MAX_TIME then Stop("tempo maximo") return end
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root or hum.Health <= 0 then return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
+
+                    local folder = Enemies()
+                    local core = folder and folder:FindFirstChild("Core")
+                    local hrp = core and core:FindFirstChild("HumanoidRootPart")
+                    if not hrp then
+                        if seen then
+                            missingSince = missingSince or os.clock()
+                            if os.clock() - missingSince > MISSING_GRACE then Stop("Core sumiu") end
+                        else
+                            Notify("Esperando o Core aparecer...")
+                        end
+                        return
+                    end
+                    missingSince = nil
+                    seen = true
+
+                    local chum = core:FindFirstChildOfClass("Humanoid")
+                    if chum and chum.Health <= 0 then Stop("Core morreu") return end
+
+                    FlyTo(hrp.Position, dt, FACTORY_FLY)
+                    if (root.Position - hrp.Position).Magnitude <= ARRIVE_DIST then
+                        EquipSword()
+                    end
+                end)
+                if not ok then warn("[SpectralHub] erro na Fabrica:", err) end
+            end
+        end
+    end)
+end
+
 -- ===== AUTO FARM OSSO (reconstruido) =====
 do
     local NPC_1 = Vector3.new(-9479.2168, 141.215088, 5566.09277)
@@ -2199,7 +2284,6 @@ do
         return q ~= nil and q.Visible == true
     end
 
-    -- comprar osso
     task.spawn(function()
         while Alive() do
             task.wait(3)
