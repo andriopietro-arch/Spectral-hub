@@ -1,7 +1,9 @@
 --[[
-    SpectralHub v7.5
-    - NOVO: Auto Pumpkin Hunt (aba Auto Farm): vai na abobora, clica dentro dela, vai para a proxima
-      quando some e mata o Jack o' Lantern quando spawnar
+    SpectralHub v7.6
+    - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
+      troca de abobora no mesmo frame em que ela some; ignora aboboras de enfeite;
+      Jack o' Lantern tem prioridade (morreu / parou de tomar dano = volta pras aboboras)
+    - REMOVIDO: auto porta + boss do Halloween
     - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
     - Auto treinar raca: farma osso no ponto de farm -> V4 ativa: espera no ponto alto -> V4 acabou:
       tenta comprar upgrade e volta a farmar (sem raid/fragmentos)
@@ -64,7 +66,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.5",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.6",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -118,8 +120,8 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false }
-local HW = { active = false, boss = false, window = 20 }   -- active: evento rolando (farm normal pausa); window: minutos apos a hora cheia
+local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false }   -- Halloween = Auto Pumpkin Hunt
+local HW = { active = false }   -- active: Pumpkin Hunt ligado (farm de osso pausa)
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -162,7 +164,6 @@ local function SaveSettings()
             FarmHeight = RACE_HEIGHT,
             KillRange = KILL_AURA_RANGE,
             KillMax = KILL_AURA_MAX,
-            HalloweenWindow = HW.window,
             Tool = SelectedToolLabel,
             WaterWalk = WaterWalk,
             NoNotify = NotifyOff,
@@ -197,7 +198,6 @@ pcall(function()
         if type(d.FarmHeight) == "number" then RACE_HEIGHT = d.FarmHeight end
         if type(d.KillRange) == "number" then KILL_AURA_RANGE = math.clamp(d.KillRange, 30, 400) end
         if type(d.KillMax) == "number" then KILL_AURA_MAX = math.clamp(d.KillMax, 1, 20) end
-        if type(d.HalloweenWindow) == "number" then HW.window = math.clamp(d.HalloweenWindow, 5, 55) end
         if type(d.Tool) == "string" and TOOL_MAP[d.Tool] then SelectedToolLabel = d.Tool end
         if type(d.WaterWalk) == "boolean" then WaterWalk = d.WaterWalk end
         if type(d.NoNotify) == "boolean" then NotifyOff = d.NoNotify end
@@ -378,7 +378,7 @@ TabFarm:CreateToggle({
 })
 TabFarm:CreateSection("Evento")
 TabFarm:CreateToggle({
-    Name = "Auto Halloween (ab\u{F3}bora + portas + boss)", CurrentValue = FarmFlags.Halloween,
+    Name = "Auto Pumpkin Hunt (ab\u{F3}boras + Jack o' Lantern)", CurrentValue = FarmFlags.Halloween,
     Callback = function(v) FarmFlags.Halloween = v end,
 })
 
@@ -1058,7 +1058,7 @@ task.spawn(function()
     local idx, lastAll = 1, false
     while Alive() do
         local dt = Run.Heartbeat:Wait()
-        if anyTrue(MirageFlags) and not StartSeaEvent and not HW.boss then
+        if anyTrue(MirageFlags) and not StartSeaEvent then
             local ok, err = pcall(function()
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1198,7 +1198,7 @@ task.spawn(function()
     local pulled = setmetatable({}, { __mode = "k" })
     while Alive() do
         task.wait(0.3)
-        if FruitFlags.Collect and not HW.boss then
+        if FruitFlags.Collect then
             pcall(function()
                 local root = MyRoot()
                 if not root then return end
@@ -1437,7 +1437,7 @@ task.spawn(function()
         if RaidReset then
             current, hoverPos, nilFor, travelFrom, sawEnemy, emptyFor, RaidReset = nil, nil, 0, nil, false, 0, false
         end
-        if WantRaidDone() and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy() and not HW.boss then
+        if WantRaidDone() and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy() then
             local ok, err = pcall(function()
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1647,64 +1647,35 @@ task.spawn(function()
 end)
 
 end
--- ===== AUTO HALLOWEEN =====
--- Fora do evento: farma aboboras e mata os NPCs de Halloween que spawnam.
--- Evento (primeiros HW.window min de cada hora): portas + E + NPCs.
--- Porta do boss spawnou: ignora tudo e vai matar o boss. Acabou: volta para as aboboras.
+
+-- ===== AUTO PUMPKIN HUNT =====
+-- So aboboras dentro de workspace.PumpkinHunt e visiveis. Voa ate a mais proxima e bate nela.
+-- Sumiu: troca no mesmo frame. Enfeite (bate e nada muda): ignora por 5 min.
+-- Jack o' Lantern tem prioridade; morreu ou parou de tomar dano = volta pras aboboras.
 do
-    local DOOR_START_INDEX, BOSS_DOOR_INDEX = 135, 123
-    local BOSS_NAME = "Hellfire Gas"
-    local HOLD_E_TIME, MOB_SEARCH_RADIUS = 2, 350
-    local DOOR_MARKERS    = { "hallow", "pumpkin", "jack", "spook", "ghost", "skull" }
-    local PUMPKIN_MARKERS = { "pumpkin", "abobora", "halloween" }
-    local ENEMY_MARKERS   = { "jack", "lantern", "pumpkin", "ghost", "skull", "spook", "hallow" }
+    local PUMPKIN_FLY = 300
+    local HIT_RANGE = 8
+    local HIT_INTERVAL = 0.15
+    local PROBE_TIME = 3              -- batendo esse tempo (e hits minimos) sem nada mudar = enfeite
+    local PROBE_MIN_HITS = 10
+    local FAKE_IGNORE_TIME = 300
+    local TRAVEL_TIMEOUT = 6
+    local JACK_NO_DAMAGE_TIMEOUT = 1.5
+    local JACK_IGNORE_TIME = 6
+    local NIL_SCAN_INTERVAL = 3
+    local USE_NIL_PUMPKINS = false    -- true = tambem usa aboboras sem pai (pode ir em nao spawnadas)
 
-    local function hasAny(name, list)
-        name = name:lower()
-        for _, m in ipairs(list) do if name:find(m, 1, true) then return true end end
-        return false
+    local function PPos(i)
+        local ok, pos = pcall(InstPos, i)
+        if ok then return pos end
+        return nil
     end
-
-    -- ---------- portas ----------
-    local function DoorFolder()
-        local m = WS:FindFirstChild("Map")
-        local d = m and m:FindFirstChild("Dressrosa")
-        return d and d:FindFirstChild("Dressrosa")
-    end
-    local function IsHalloweenDoor(d)
-        if hasAny(d.Name, DOOR_MARKERS) then return true end
-        for _, x in ipairs(d:GetDescendants()) do
-            if hasAny(x.Name, DOOR_MARKERS) then return true end
-        end
-        return false
-    end
-    local function HalloweenDoors()
-        local out, f = {}, DoorFolder()
-        if not f then return out end
-        for i, d in ipairs(f:GetChildren()) do
-            if i == DOOR_START_INDEX or (i ~= BOSS_DOOR_INDEX and IsHalloweenDoor(d)) then
-                local p = InstPos(d)
-                if p then table.insert(out, { idx = i, inst = d, pos = p }) end
-            end
-        end
-        return out
-    end
-    local function BossDoorFrame()
-        local f = DoorFolder()
-        local d = f and f:GetChildren()[BOSS_DOOR_INDEX]
-        return d and d:FindFirstChild("Frame")
-    end
-    local function BossModel()
-        local e = Enemies()
-        local b = e and e:FindFirstChild(BOSS_NAME)
-        local alive, hrp = IsAlive(b)
-        if alive then return b, hrp end
+    local function FirstPart(inst)
+        if inst:IsA("BasePart") then return inst end
+        return inst:FindFirstChildWhichIsA("BasePart", true)
     end
 
     -- ---------- interacao ----------
-    local function PressE(down)
-        pcall(function() VIM:SendKeyEvent(down, Enum.KeyCode.E, false, game) end)
-    end
     local function FirePrompts(inst)
         if not fireproximityprompt then return end
         if inst:IsA("ProximityPrompt") then pcall(fireproximityprompt, inst) end
@@ -1719,262 +1690,306 @@ do
             if x:IsA("ClickDetector") then pcall(fireclickdetector, x) end
         end
     end
-    local function Hit(char, model, hrp)
-        AttackList({ { model = model, hrp = hrp } })
+    local function SwingSword()
+        local char = player.Character
         local tool = GetSword()
-        if tool and tool.Parent == char then pcall(function() tool:Activate() end) end
+        if tool and char and tool.Parent == char then pcall(function() tool:Activate() end) end
     end
 
-    -- ---------- NPCs ----------
-    local function NearestMob(origin, radius)       -- qualquer inimigo perto (fase do evento)
-        local best, bd, bh
-        local f = Enemies()
-        if not f then return end
-        for _, e in ipairs(f:GetChildren()) do
-            if e.Name ~= BOSS_NAME then
-                local alive, hrp = IsAlive(e)
-                if alive then
-                    local d = (hrp.Position - origin).Magnitude
-                    if d <= radius and (not bd or d < bd) then best, bd, bh = e, d, hrp end
-                end
-            end
+    local function HitPumpkin(inst, root)
+        EquipSword()
+        local ra, rh = RegAttack(), RegHit()
+        local part = FirstPart(inst) or inst
+        if ra then pcall(function() ra:FireServer(0.36666667461395, 1) end) end
+        if rh then
+            pcall(function() rh:FireServer(inst) end)                                 -- formato do Cobalt
+            pcall(function() rh:FireServer(part, { { inst, part } }, ATTACK_KEY) end) -- formato do NPC
         end
-        return best, bh
-    end
-    local function HalloweenMob(origin)             -- NPC de Halloween em qualquer lugar (fase das aboboras)
-        local best, bd, bh
-        local f = Enemies()
-        if not f then return end
-        for _, e in ipairs(f:GetChildren()) do
-            if e.Name ~= BOSS_NAME and hasAny(e.Name, ENEMY_MARKERS) then
-                local alive, hrp = IsAlive(e)
-                if alive then
-                    local d = (hrp.Position - origin).Magnitude
-                    if not bd or d < bd then best, bd, bh = e, d, hrp end
-                end
-            end
-        end
-        return best, bh
+        FirePrompts(inst)
+        FireClicks(inst)
+        pcall(TouchInst, inst, root)
+        SwingSword()
     end
 
-    -- ---------- aboboras ----------
-    local pumpkins = {}                                   -- [instancia] = true
-    local pumpkinBad = setmetatable({}, { __mode = "k" }) -- instancia -> ignorar ate
-    local function InCharacter(x)
-        local m = x:FindFirstAncestorWhichIsA("Model")
-        while m do
-            if m:FindFirstChildOfClass("Humanoid") then return true end
-            m = m.Parent and m.Parent:FindFirstAncestorWhichIsA("Model")
+    local function HitNpc(model, hrp)
+        EquipSword()
+        pcall(AttackList, { { model = model, hrp = hrp } })
+        SwingSword()
+    end
+
+    -- ---------- Jack o' Lantern ----------
+    local JACK_NAME, JACK_HEIGHT = "Jack o' Lantern", 15
+    local deadJack = setmetatable({}, { __mode = "k" })
+    local hookedJack = setmetatable({}, { __mode = "k" })
+    local jackState = setmetatable({}, { __mode = "k" })
+
+    local function JackIsDead(npc, hum)
+        if deadJack[npc] then return true end
+        if not npc.Parent then return true end
+        if hum.Health <= 0.5 or hum:GetState() == Enum.HumanoidStateType.Dead then
+            deadJack[npc] = true
+            return true
         end
         return false
     end
-    local function Consider(x)
-        local cand
-        if x:IsA("ClickDetector") or x:IsA("ProximityPrompt") then
-            local p = x.Parent
-            if not p then return end
-            if not (hasAny(p.Name, PUMPKIN_MARKERS) or (p.Parent and hasAny(p.Parent.Name, PUMPKIN_MARKERS))) then return end
-            cand = p
-        elseif x:IsA("Model") or x:IsA("BasePart") then
-            if not hasAny(x.Name, PUMPKIN_MARKERS) then return end
-            cand = x
-        else
-            return
-        end
-        local en, df = Enemies(), DoorFolder()
-        if (en and cand:IsDescendantOf(en)) or (df and cand:IsDescendantOf(df)) then return end
-        if InCharacter(cand) then return end
-        local a = cand
-        while a and a ~= WS do
-            if pumpkins[a] then return end
-            a = a.Parent
-        end
-        pumpkins[cand] = true
-    end
-    task.spawn(function()
-        local n = 0
-        for _, x in ipairs(WS:GetDescendants()) do
-            if not Alive() then return end
-            pcall(Consider, x)
-            n += 1
-            if n % 3000 == 0 then task.wait() end
-        end
-        local c, shown = 0, 0
-        for inst in pairs(pumpkins) do
-            c += 1
-            if shown < 8 then shown += 1 print("[SpectralHub] abobora:", inst:GetFullName()) end
-        end
-        print("[SpectralHub] Halloween: aboboras encontradas no mapa agora =", c)
-    end)
-    local addConn
-    addConn = WS.DescendantAdded:Connect(function(x)
-        if not Alive() then addConn:Disconnect() return end
-        pcall(Consider, x)
-    end)
-    local function NextPumpkin(origin)
-        local best, bp, bd
-        for inst in pairs(pumpkins) do
-            if not inst.Parent then
-                pumpkins[inst] = nil
-            elseif not (pumpkinBad[inst] and pumpkinBad[inst] > os.clock()) then
-                local p = InstPos(inst)
-                if p then
-                    local d = (p - origin).Magnitude
-                    if not bd or d < bd then best, bp, bd = inst, p, d end
+
+    local function FindJack(myPos)
+        local folder = Enemies()
+        if not folder then return nil end
+        local now = os.clock()
+        for _, npc in ipairs(folder:GetChildren()) do
+            if npc.Name == JACK_NAME and not deadJack[npc] then
+                local hum = npc:FindFirstChildOfClass("Humanoid")
+                local hrp = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("UpperTorso")
+                if hum and hrp then
+                    if not hookedJack[npc] then
+                        hookedJack[npc] = true
+                        hum.Died:Connect(function() deadJack[npc] = true end)
+                        npc.AncestryChanged:Connect(function()
+                            if not npc.Parent then deadJack[npc] = true end
+                        end)
+                    end
+                    if not JackIsDead(npc, hum) then
+                        local st = jackState[npc]
+                        if not st then
+                            st = { hp = hum.Health, lastDmg = now, ignore = 0 }
+                            jackState[npc] = st
+                        end
+                        if st.ignore <= now then
+                            if hum.Health < st.hp then st.lastDmg = now end
+                            st.hp = hum.Health
+                            if (hrp.Position - myPos).Magnitude > JACK_HEIGHT + 12 then
+                                st.lastDmg = now      -- voo ate ele nao conta como "sem dano"
+                            end
+                            if now - st.lastDmg > JACK_NO_DAMAGE_TIMEOUT then
+                                st.ignore = now + JACK_IGNORE_TIME
+                                st.lastDmg = st.ignore
+                            else
+                                return npc, hrp
+                            end
+                        end
+                    end
                 end
             end
         end
-        return best, bp
+        return nil
     end
 
-    local S = { visited = {}, cur = nil, dwell = 0, pressed = false, reenter = false, lastHour = -1,
-                bossKilled = false, sawBoss = false, enteredAt = nil, pk = nil, pkT = 0, pkAct = 0 }
-
-    local function HookDeath(char)
-        local hum = char:WaitForChild("Humanoid", 10)
-        if hum then hum.Died:Connect(function() S.reenter = true end) end
+    -- ---------- aboboras ----------
+    local function IsPumpkinName(name)
+        return name ~= "PumpkinHunt" and name:lower():find("pumpkin", 1, true) ~= nil
     end
-    if player.Character then task.spawn(HookDeath, player.Character) end
-    player.CharacterAdded:Connect(function(c) task.spawn(HookDeath, c) end)
+    local function HuntFolder() return WS:FindFirstChild("PumpkinHunt") end
+
+    -- esta de verdade spawnada? (no mundo + alguma peca visivel)
+    local function IsLive(inst)
+        if inst.Parent == nil then return USE_NIL_PUMPKINS end
+        local folder = HuntFolder()
+        if not folder or not inst:IsDescendantOf(folder) then return false end
+        if inst:IsA("BasePart") then return inst.Transparency < 0.95 end
+        local n = 0
+        for _, d in ipairs(inst:GetDescendants()) do
+            if d:IsA("BasePart") then
+                if d.Transparency < 0.95 then return true end
+                n += 1
+                if n >= 25 then break end
+            end
+        end
+        return false
+    end
+
+    local function Top(d)
+        local top, p = d, d.Parent
+        while p and p ~= WS and p.Name ~= "PumpkinHunt" do
+            if IsPumpkinName(p.Name) then top = p end
+            p = p.Parent
+        end
+        return top
+    end
+
+    local known = setmetatable({}, { __mode = "k" })
+    local gone = setmetatable({}, { __mode = "k" })
+    local fake = setmetatable({}, { __mode = "k" })
+    local bad = setmetatable({}, { __mode = "k" })
+
+    local function Ignored(inst)
+        if gone[inst] then return true end
+        local now = os.clock()
+        if fake[inst] and fake[inst] > now then return true end
+        if bad[inst] and bad[inst] > now then return true end
+        return false
+    end
+
+    local function AddPumpkin(d)
+        if not IsPumpkinName(d.Name) then return end
+        if d:FindFirstAncestor("Enemies") then return end
+        if d.Parent ~= nil then
+            local folder = HuntFolder()
+            if not folder or not d:IsDescendantOf(folder) then return end   -- enfeite do mapa
+        end
+        local t = Top(d)
+        if not gone[t] then known[t] = true end
+    end
+
+    local function ScanVisible()
+        local folder = HuntFolder()
+        if not folder then return end
+        for _, d in ipairs(folder:GetDescendants()) do AddPumpkin(d) end
+    end
+    local lastNilScan = 0
+    local function ScanNil()
+        if not USE_NIL_PUMPKINS or not getnilinstances then return end
+        if os.clock() - lastNilScan < NIL_SCAN_INTERVAL then return end
+        lastNilScan = os.clock()
+        local ok, list = pcall(getnilinstances)
+        if not ok then return end
+        for _, inst in ipairs(list) do
+            if IsPumpkinName(inst.Name) then AddPumpkin(inst) end
+        end
+    end
+    pcall(ScanVisible)
+    local addConn
+    addConn = WS.DescendantAdded:Connect(function(d)
+        if not Alive() then addConn:Disconnect() return end
+        pcall(AddPumpkin, d)
+    end)
+
+    local function Snapshot(inst)
+        local parts = {}
+        if inst:IsA("BasePart") then
+            parts[1] = { p = inst, tr = inst.Transparency }
+        else
+            for _, d in ipairs(inst:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    parts[#parts + 1] = { p = d, tr = d.Transparency }
+                    if #parts >= 25 then break end
+                end
+            end
+        end
+        return { parent = inst.Parent, pos = PPos(inst), parts = parts }
+    end
+    local function Changed(inst, snap)
+        if inst.Parent ~= snap.parent then return true end
+        local pos = PPos(inst)
+        if not pos then return true end
+        if snap.pos and (pos - snap.pos).Magnitude > 30 then return true end
+        for _, e in ipairs(snap.parts) do
+            if not e.p.Parent then return true end
+            if e.p.Transparency - e.tr > 0.5 then return true end
+        end
+        return false
+    end
+
+    local function NearestPumpkin(origin)
+        local best, bd
+        for inst in pairs(known) do
+            if Top(inst) ~= inst then
+                known[inst] = nil
+            elseif not Ignored(inst) then
+                if not IsLive(inst) then
+                    if inst.Parent == nil and not USE_NIL_PUMPKINS then known[inst] = nil end
+                else
+                    local pos = PPos(inst)
+                    if not pos then
+                        known[inst] = nil
+                    else
+                        local d = (pos - origin).Magnitude
+                        if not bd or d < bd then best, bd = inst, d end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    -- ---------- estado do alvo atual ----------
+    local curPumpkin, snap, selAt, arriveAt, hits = nil, nil, 0, nil, 0
+    local ancConn, vanished = nil, false
+    local lastHit = 0
+
+    local function ClearPumpkin()
+        if ancConn then ancConn:Disconnect() ancConn = nil end
+        curPumpkin, snap, selAt, arriveAt, hits, vanished = nil, nil, 0, nil, 0, false
+    end
+
+    local function SelectPumpkin(inst)
+        curPumpkin = inst
+        snap, selAt, arriveAt, hits, vanished = Snapshot(inst), os.clock(), nil, 0, false
+        ancConn = inst.AncestryChanged:Connect(function() vanished = true end)
+        print(("[PumpkinHunt] alvo: %s (%s) em %s"):format(inst.Name, inst.ClassName, tostring(inst.Parent)))
+    end
 
     task.spawn(function()
-        local lastHit = 0
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            local ok, err = pcall(function()
-                HW.active = FarmFlags.Halloween      -- ligado: o farm de osso fica pausado
-                if not FarmFlags.Halloween then
-                    HW.boss = false
-                    if S.pressed then PressE(false); S.pressed = false end
-                    return
-                end
+            HW.active = FarmFlags.Halloween      -- ligado: o farm de osso fica pausado
+            if FarmFlags.Halloween then
+                ScanNil()
+                local ok, err = pcall(function()
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root or hum.Health <= 0 then ClearPumpkin() return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
 
-                local t = os.date("*t")
-                if t.hour ~= S.lastHour then
-                    S.lastHour = t.hour
-                    S.visited, S.cur, S.dwell, S.pressed = {}, nil, 0, false
-                    S.bossKilled, S.sawBoss, S.enteredAt = false, false, nil
-                end
-                local boss, bossHrp = BossModel()
-                local frame = BossDoorFrame()
-                local inWindow = t.min < HW.window
-                if boss then S.sawBoss = true
-                elseif S.sawBoss and not S.reenter then S.bossKilled, S.sawBoss = true, false end
-                local wantBoss = not S.bossKilled and (boss ~= nil or (frame ~= nil and inWindow))
-                HW.boss = wantBoss and true or false
-                local eventOn = inWindow or boss ~= nil
-
-                local char = player.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                if not hum or not root or hum.Health <= 0 then return end
-                if hum.SeatPart then JumpOffBoat(hum) return end
-                EquipSword()
-
-                -- 1) BOSS: prioridade maxima
-                if wantBoss then
-                    if S.pressed then PressE(false); S.pressed = false end
-                    if boss and bossHrp and (bossHrp.Position - root.Position).Magnitude <= 500 then
-                        S.reenter, S.enteredAt = false, nil
-                        FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                        HoldPlayer(root)
-                        Hit(char, boss, bossHrp)
+                    -- 1) Jack o' Lantern: prioridade
+                    local jack, jackHrp = FindJack(root.Position)
+                    if jack then
+                        ClearPumpkin()
+                        FlyTo(jackHrp.Position + Vector3.new(0, JACK_HEIGHT, 0), dt, PUMPKIN_FLY)
+                        if os.clock() - lastHit >= 0.3 then
+                            lastHit = os.clock()
+                            HitNpc(jack, jackHrp)
+                        end
                         return
                     end
-                    if S.enteredAt and os.clock() - S.enteredAt < 12 then
-                        HoldPlayer(root)
-                        return
-                    end
-                    S.enteredAt = nil
-                    ReleaseHold()
-                    if frame then
-                        local p = InstPos(frame)
-                        FlyTo(p, dt, MIRAGE_SPEED)
-                        if (root.Position - p).Magnitude <= 10 then
-                            if firetouchinterest then
-                                pcall(function() firetouchinterest(root, frame, 0) firetouchinterest(root, frame, 1) end)
-                            end
-                            S.enteredAt = os.clock()
-                        end
-                    elseif boss and bossHrp then
-                        FlyTo(bossHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, MIRAGE_SPEED)
-                    end
-                    return
-                end
 
-                -- 2) FORA DO EVENTO: aboboras + NPCs de Halloween
-                if not eventOn then
-                    if S.pressed then PressE(false); S.pressed = false end
-                    local mob, mobHrp = HalloweenMob(root.Position)
-                    if mob then
-                        FlyTo(mobHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                        HoldPlayer(root)
-                        Hit(char, mob, mobHrp)
-                        return
+                    -- 2) abobora atual sumiu / ficou invisivel? troca no mesmo frame
+                    if curPumpkin and (vanished or Ignored(curPumpkin)
+                        or not IsLive(curPumpkin) or Changed(curPumpkin, snap)) then
+                        gone[curPumpkin] = true
+                        known[curPumpkin] = nil
+                        print("[PumpkinHunt] abobora sumiu, trocando")
+                        ClearPumpkin()
                     end
-                    ReleaseHold()
-                    local inst, p = NextPumpkin(root.Position)
-                    if not inst then
-                        S.pk = nil
-                        Notify("Procurando aboboras...")
-                        return
-                    end
-                    local target = p + Vector3.new(0, 3, 0)
-                    FlyTo(target, dt, MIRAGE_SPEED)
-                    if (root.Position - target).Magnitude <= 8 then
-                        if S.pk ~= inst then S.pk, S.pkT = inst, os.clock() end
-                        if os.clock() - S.pkAct >= 0.3 then
-                            S.pkAct = os.clock()
-                            FirePrompts(inst)
-                            FireClicks(inst)
-                            TouchInst(inst, root)
+                    if not curPumpkin then
+                        local nxt = NearestPumpkin(root.Position)
+                        if not nxt then
+                            Notify("Procurando aboboras...")
+                            return
                         end
-                        if os.clock() - S.pkT > 6 then          -- nao sumiu: pula e volta depois
-                            pumpkinBad[inst] = os.clock() + 30
-                            S.pk = nil
-                        end
+                        SelectPumpkin(nxt)
                     end
-                    return
-                end
 
-                -- 3) EVENTO: NPC perto da porta
-                local mob, mobHrp = NearestMob(root.Position, MOB_SEARCH_RADIUS)
-                if mob and S.cur and S.visited[S.cur.idx] then
-                    FlyTo(mobHrp.Position + Vector3.new(0, RACE_HEIGHT, 0), dt, 300)
-                    HoldPlayer(root)
-                    Hit(char, mob, mobHrp)
-                    return
-                end
-                ReleaseHold()
+                    local pos = PPos(curPumpkin)
+                    if not pos then gone[curPumpkin] = true ClearPumpkin() return end
 
-                -- 4) EVENTO: ciclo de portas (E por 2s em cada)
-                local doors = HalloweenDoors()
-                if #doors == 0 then Notify("Nenhuma porta de Halloween encontrada.") return end
-                if not S.cur or S.visited[S.cur.idx] then
-                    local best, bd
-                    for _, d in ipairs(doors) do
-                        if not S.visited[d.idx] then
-                            local dd = (d.pos - root.Position).Magnitude
-                            if not bd or dd < bd then best, bd = d, dd end
+                    FlyTo(pos + Vector3.new(0, 3, 0), dt, PUMPKIN_FLY)
+                    local now = os.clock()
+                    if (root.Position - pos).Magnitude <= HIT_RANGE then
+                        arriveAt = arriveAt or now
+                        if now - lastHit >= HIT_INTERVAL then
+                            lastHit = now
+                            hits += 1
+                            HitPumpkin(curPumpkin, root)
                         end
+                        if now - arriveAt > PROBE_TIME and hits >= PROBE_MIN_HITS then
+                            fake[curPumpkin] = now + FAKE_IGNORE_TIME
+                            print("[PumpkinHunt] enfeite, ignorando:", curPumpkin.Name)
+                            ClearPumpkin()
+                        end
+                    elseif now - selAt > TRAVEL_TIMEOUT then
+                        bad[curPumpkin] = now + 20
+                        ClearPumpkin()
                     end
-                    if not best then S.visited = {} return end
-                    S.cur, S.dwell, S.pressed = best, 0, false
+                end)
+                if not ok then
+                    warn("[SpectralHub] erro no Pumpkin Hunt:", err)
+                    ClearPumpkin()
                 end
-                local target = S.cur.pos + Vector3.new(0, 3, 0)
-                FlyTo(target, dt, MIRAGE_SPEED)
-                if (root.Position - target).Magnitude <= 8 then
-                    if not S.pressed then PressE(true); S.pressed = true; FirePrompts(S.cur.inst) end
-                    S.dwell += dt
-                    if S.dwell >= HOLD_E_TIME then
-                        PressE(false); S.pressed = false
-                        S.visited[S.cur.idx] = true
-                    end
-                else
-                    S.dwell = 0
-                end
-            end)
-            if not ok then warn("[SpectralHub] erro no Auto Halloween:", err) end
+            else
+                if curPumpkin then ClearPumpkin() end
+            end
         end
     end)
 end
