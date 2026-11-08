@@ -1,5 +1,6 @@
 --[[
-    SpectralHub v7.6
+    SpectralHub v7.7
+    - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia) restaurados
     - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
       troca de abobora no mesmo frame em que ela some; ignora aboboras de enfeite;
       Jack o' Lantern tem prioridade (morreu / parou de tomar dano = volta pras aboboras)
@@ -66,7 +67,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.6",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.7",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -1646,6 +1647,160 @@ task.spawn(function()
     end
 end)
 
+end
+
+-- ===== ESP + STATS DO SERVIDOR =====
+do
+    local TAG = "SpectralESP"
+    local reg = { Fruit = {}, Player = {} }
+
+    local function Destroy(e)
+        pcall(function() e.gui:Destroy() end)
+        pcall(function() if e.hl then e.hl:Destroy() end end)
+    end
+
+    ClearESP = function(kind)
+        local t = reg[kind]
+        if not t then return end
+        for k, e in pairs(t) do
+            Destroy(e)
+            t[k] = nil
+        end
+    end
+
+    local function Build(it, color)
+        local gui = Instance.new("BillboardGui")
+        gui.Name = TAG
+        gui.AlwaysOnTop = true
+        gui.Size = UDim2.new(0, 160, 0, 34)
+        gui.StudsOffset = Vector3.new(0, 3, 0)
+        gui.MaxDistance = math.huge
+        local lbl = Instance.new("TextLabel")
+        lbl.BackgroundTransparency = 1
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 13
+        lbl.TextColor3 = color
+        lbl.TextStrokeTransparency = 0.4
+        lbl.Parent = gui
+        gui.Parent = it.part
+
+        local hl = Instance.new("Highlight")
+        hl.Name = TAG
+        hl.FillColor = color
+        hl.OutlineColor = color
+        hl.FillTransparency = 0.6
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = it.hlTarget
+        hl.Parent = it.hlTarget
+        return { gui = gui, hl = hl, label = lbl, part = it.part }
+    end
+
+    local function Sync(kind, list, color)
+        local t = reg[kind]
+        local seen = {}
+        local me = MyRoot()
+        for _, it in ipairs(list) do
+            seen[it.key] = true
+            local e = t[it.key]
+            if e and (not e.gui.Parent or e.part ~= it.part) then
+                Destroy(e)
+                t[it.key], e = nil, nil
+            end
+            if not e then
+                local ok, res = pcall(Build, it, color)
+                if ok then e = res t[it.key] = e end
+            end
+            if e then
+                local d = me and (me.Position - it.part.Position).Magnitude or 0
+                e.label.Text = it.name .. "\n[" .. math.floor(d) .. "]"
+            end
+        end
+        for k, e in pairs(t) do
+            if not seen[k] then Destroy(e) t[k] = nil end
+        end
+    end
+
+    task.spawn(function()
+        while Alive() do
+            task.wait(0.4)
+
+            if ESPFlags.Fruit then
+                pcall(function()
+                    local list = {}
+                    for _, f in ipairs(WorldFruits()) do
+                        local h = f:FindFirstChild("Handle")
+                        if h and h:IsA("BasePart") then
+                            table.insert(list, { key = f, part = h, hlTarget = h, name = f.Name })
+                        end
+                    end
+                    Sync("Fruit", list, Color3.fromRGB(255, 170, 0))
+                end)
+            end
+
+            if ESPFlags.Player then
+                pcall(function()
+                    local list = {}
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= player then
+                            local ch = p.Character
+                            local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+                            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+                            if hrp and hum and hum.Health > 0 then
+                                table.insert(list, { key = p, part = hrp, hlTarget = ch, name = p.DisplayName })
+                            end
+                        end
+                    end
+                    Sync("Player", list, Color3.fromRGB(255, 60, 60))
+                end)
+            end
+        end
+    end)
+
+    -- ---------- Stats do servidor ----------
+    -- Numero = quantas luas faltam para a cheia (0 = cheia agora).
+    -- IDs de memoria: se aparecer "fase desconhecida", me mande o id que aparece no label.
+    local MOON_LEFT = {
+        ["9709149431"] = 0,
+        ["9709149052"] = 1,
+        ["9709143733"] = 2,
+        ["9709150401"] = 3,
+        ["9709149680"] = 4,
+    }
+    local warned = {}
+
+    local function MoonText()
+        local sky = Lighting:FindFirstChildOfClass("Sky")
+        if not sky then return "Luas at\u{E9} a lua cheia: sem Sky" end
+        local id = tostring(sky.MoonTextureId):match("%d+")
+        if not id then return "Luas at\u{E9} a lua cheia: ?" end
+        local left = MOON_LEFT[id]
+        if left == nil then
+            if not warned[id] then
+                warned[id] = true
+                print("[SpectralHub] MoonTextureId desconhecido:", sky.MoonTextureId)
+            end
+            return "Fase desconhecida (id " .. id .. ")"
+        end
+        if left == 0 then return "\u{1F315} Lua cheia agora!" end
+        return "Luas at\u{E9} a lua cheia: " .. left
+    end
+
+    task.spawn(function()
+        while Alive() do
+            task.wait(1)
+            pcall(function()
+                local n = #WorldFruits()
+                if StatsUI.Fruit then
+                    StatsUI.Fruit:Set("Fruta spawnada: " .. (n > 0 and ("\u{1F7E2} (" .. n .. ")") or "\u{1F534}"))
+                end
+                if StatsUI.Mirage then
+                    StatsUI.Mirage:Set("Ilha da miragem: " .. (GetMirage() and "\u{1F7E2}" or "\u{1F534}"))
+                end
+                if StatsUI.Moon then StatsUI.Moon:Set(MoonText()) end
+            end)
+        end
+    end)
 end
 
 -- ===== AUTO PUMPKIN HUNT =====
