@@ -1,21 +1,23 @@
 --[[
-    SpectralHub v8.0
-    - Auto Dungeon (aba Auto Farm): mata todos os NPCs vivos num raio de 150 studs, voa ate o mais
-      proximo e, quando a area limpa, vai para workspace.Map.Dungeon[fase].ExitTeleporter.Root.
+    SpectralHub v8.1
+    - Auto Dungeon (aba Auto Farm): mata todos os NPCs vivos num raio de 150 studs (ate 30 por golpe),
+      voa ate o mais proximo e, quando a area limpa, vai para workspace.Map.Dungeon[fase].ExitTeleporter.Root.
+      Ignora "Blank Buddy" e "Core". So atua quando voce esta a ate 1500 studs de uma porta da dungeon.
       A fase atual e a porta mais proxima ainda nao usada; ao atravessar, marca a porta e passa
-      para a proxima. Tambem ataca enquanto voa. Prioridade: Fabrica > Dungeon > Pumpkin > osso.
+      para a proxima.
+    - Auto Chest (aba Auto Farm): pega os baus Map.Dressrosa[x].ChestN, sempre o mais proximo.
+      Bau tocado que continua no mapa (pego mas parece nao pego) e ignorado por 5 min.
+    - Prioridade: Fabrica > Dungeon > Chest > Pumpkin > osso.
     - Auto Fabrica (aba Auto Farm): quando chega "THE FACTORY HAS BEEN BREACHED", voa ate
       workspace.Enemies.Core.HumanoidRootPart e equipa a espada. Termina por mensagem de fim,
-      Core sumir/morrer ou 6 min. Com prioridade sobre Pumpkin Hunt e farm de osso.
+      Core sumir/morrer ou 6 min.
     - FlyTo detecta TP que nao valeu (voce fica longe do ponto logo depois): desliga o TP por 15s e voa
-    - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia) restaurados
+    - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia)
     - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
-      troca de abobora no mesmo frame em que ela some; ignora aboboras de enfeite;
-      Jack o' Lantern tem prioridade (morreu / parou de tomar dano = volta pras aboboras)
-    - REMOVIDO: auto porta + boss do Halloween
+      Jack o' Lantern tem prioridade
     - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
     - Auto farm osso / treino: ao ligar vao primeiro para o ponto de farm (-9517, 142, 5543)
-    - Raid: nao puxa/trava mais os NPCs (dessincronizava com o servidor)
+    - Raid: nao puxa/trava os NPCs
     - Iniciar raid: puxa Map["Boat Castle"].MapTeleportA.Hitbox para o personagem antes de clicar no botao
 ]]
 
@@ -73,7 +75,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v8.0",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v8.1",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -127,8 +129,8 @@ local abandoned = setmetatable({}, { __mode = "k" })
 
 local FruitFlags = { Collect=false, Store=false, Chip=false, Raid=false, RaidDone=false }
 local ESPFlags = { Fruit=false, Player=false }
-local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false, Factory=false, Dungeon=false }
-local HW = { active = false, factory = false, dungeon = false }
+local FarmFlags = { Run=false, Buy=false, V4=false, Halloween=false, Factory=false, Dungeon=false, Chest=false }
+local HW = { active = false, factory = false, dungeon = false, chest = false }
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
@@ -395,6 +397,11 @@ TabFarm:CreateToggle({
     Name = "Auto Dungeon", CurrentValue = FarmFlags.Dungeon,
     Callback = function(v) FarmFlags.Dungeon = v end,
 })
+TabFarm:CreateSection("Ba\u{FA}s")
+TabFarm:CreateToggle({
+    Name = "Auto Chest", CurrentValue = FarmFlags.Chest,
+    Callback = function(v) FarmFlags.Chest = v end,
+})
 
 TabFruit:CreateSection("Frutas")
 TabFruit:CreateToggle({ Name = "Auto coletar fruta", CurrentValue = FruitFlags.Collect, Callback = function(v) FruitFlags.Collect = v end })
@@ -577,11 +584,11 @@ local function IsStunned(char, hum)
 end
 
 local ATTACK_KEY = "9de8d7f4"
-local function AttackList(list)
+local function AttackList(list, max)
     local ra, rh = RegAttack(), RegHit()
     if not ra or not rh or #list == 0 then return end
     local hits = {}
-    for i = 1, math.min(#list, KILL_AURA_MAX) do
+    for i = 1, math.min(#list, max or KILL_AURA_MAX) do
         hits[i] = { list[i].model, list[i].hrp }
     end
     ra:FireServer(0.36666667461395, 1)
@@ -918,7 +925,8 @@ local function RebuildNoclipParts()
 end
 local function ApplyNoclip()
     if not (StartSeaEvent or anyTrue(MirageFlags) or anyTrue(RaceFlags) or RaidNoclip
-        or FarmFlags.Run or FarmFlags.Halloween or HW.factory or HW.dungeon or TS.farm or TS.waiting) then return end
+        or FarmFlags.Run or FarmFlags.Halloween or HW.factory or HW.dungeon or HW.chest
+        or TS.farm or TS.waiting) then return end
     local now = os.clock()
     if now - lastNoclipRebuild > 1 or lastBoatForNoclip ~= currentBoat then
         lastNoclipRebuild = now
@@ -2105,8 +2113,8 @@ do
     task.spawn(function()
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            HW.active = FarmFlags.Halloween or HW.factory == true or HW.dungeon == true
-            if FarmFlags.Halloween and not HW.factory and not HW.dungeon then
+            HW.active = FarmFlags.Halloween or HW.factory == true or HW.dungeon == true or HW.chest == true
+            if FarmFlags.Halloween and not HW.factory and not HW.dungeon and not HW.chest then
                 ScanNil()
                 local ok, err = pcall(function()
                     local char = player.Character
@@ -2220,7 +2228,11 @@ do
             if not ev then task.wait(1) end
         end
         if not ev then return end
-        ev.OnClientEvent:Connect(function(...) pcall(OnMessage, ...) end)
+        local conn
+        conn = ev.OnClientEvent:Connect(function(...)
+            if not Alive() then conn:Disconnect() return end
+            pcall(OnMessage, ...)
+        end)
     end)
 
     task.spawn(function()
@@ -2267,14 +2279,16 @@ do
 end
 
 -- ===== AUTO DUNGEON =====
--- Mata todos os NPCs vivos num raio de HIT_RADIUS e voa ate o mais proximo. Quando a area
--- fica limpa por NO_ENEMY_DELAY, vai para Map.Dungeon[fase].ExitTeleporter.Root. A fase atual
--- e a porta mais proxima ainda nao usada; ao atravessar (mudar MOVED_DIST de posicao), marca a
--- porta como feita e passa para a proxima. Fora da dungeon (porta a mais de ACTIVE_DIST) fica parado.
+-- Mata todos os NPCs vivos num raio de HIT_RADIUS (ate 30 por golpe) e voa ate o mais proximo.
+-- Ignora Blank Buddy e Core. Quando a area fica limpa por NO_ENEMY_DELAY, vai para
+-- Map.Dungeon[fase].ExitTeleporter.Root. A fase atual e a porta mais proxima ainda nao usada;
+-- ao atravessar (mudar MOVED_DIST de posicao), marca a porta como feita e passa para a proxima.
+-- So atua quando voce esta a ate ACTIVE_DIST de alguma porta da dungeon.
 do
     local DUNGEON_FLY    = 300
     local ENEMY_RANGE    = 300   -- inimigos ate aqui impedem de ir para a porta
     local HIT_RADIUS     = 150   -- raio em que todos os NPCs levam o golpe
+    local HIT_MAX        = 30    -- maximo de NPCs por golpe
     local HIT_INTERVAL   = 0.1
     local HOVER          = 9
     local NO_ENEMY_DELAY = 1.5
@@ -2285,11 +2299,13 @@ do
     local TARGET_TIMEOUT = 25
     local TARGET_IGNORE  = 20
 
+    local IGNORE_NPCS = { ["Core"] = true, ["Blank Buddy"] = true }
+
     local doneDoors = {}
     local skip = {}
 
     local function DungeonEnemy(e)
-        if e.Name == "Core" then return false end
+        if IGNORE_NPCS[e.Name] then return false end
         return IsAlive(e)
     end
 
@@ -2320,13 +2336,24 @@ do
         end
         if #list == 0 then return end
         table.sort(list, function(a, b) return a.d < b.d end)
-        AttackList(list)
+        AttackList(list, HIT_MAX)
     end
 
     local function StageDoor(stage)
         local ex = stage:FindFirstChild("ExitTeleporter")
         if not ex then return nil end
         return ex:FindFirstChild("Root") or ex:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function InDungeon(pos)
+        local map = WS:FindFirstChild("Map")
+        local folder = map and map:FindFirstChild("Dungeon")
+        if not folder then return false end
+        for _, st in ipairs(folder:GetChildren()) do
+            local door = StageDoor(st)
+            if door and (door.Position - pos).Magnitude <= ACTIVE_DIST then return true end
+        end
+        return false
     end
 
     local function Scan(pos)
@@ -2375,11 +2402,16 @@ do
 
         while Alive() do
             local dt = Run.Heartbeat:Wait()
-            HW.dungeon = FarmFlags.Dungeon
             local want = FarmFlags.Dungeon and not HW.factory
                 and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy()
                 and not WantRaidDone()
+            local inside = false
             if want then
+                local r = MyRoot()
+                inside = r ~= nil and InDungeon(r.Position)
+            end
+            HW.dungeon = inside
+            if inside then
                 local ok, err = pcall(function()
                     local char = player.Character
                     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -2387,6 +2419,14 @@ do
                     if not hum or not root or hum.Health <= 0 then return end
                     if hum.SeatPart then JumpOffBoat(hum) return end
                     local pos = root.Position
+
+                    -- atravessou a porta? (checado antes de tudo, mesmo com inimigos por perto)
+                    if doorTry and doorTry.arrivedAt
+                        and (pos - doorTry.arrivePos).Magnitude > MOVED_DIST then
+                        doneDoors[doorTry.door] = true
+                        print("[Dungeon] atravessou a fase")
+                        doorTry, noEnemySince = nil, nil
+                    end
 
                     if os.clock() - lastEquip > 1 then
                         lastEquip = os.clock()
@@ -2401,7 +2441,8 @@ do
 
                     local enemy = NearestEnemy(pos)
                     if enemy then
-                        idleSince, noEnemySince, doorTry = nil, nil, nil
+                        idleSince, noEnemySince = nil, nil
+                        if not (doorTry and doorTry.arrivedAt) then doorTry = nil end
                         if target ~= enemy then target, targetSince = enemy, os.clock() end
                         if os.clock() - targetSince > TARGET_TIMEOUT then
                             skip[enemy] = os.clock() + TARGET_IGNORE
@@ -2445,11 +2486,7 @@ do
                         end
                     else
                         TouchDoor(root, door)
-                        if (pos - doorTry.arrivePos).Magnitude > MOVED_DIST then
-                            doneDoors[door] = true
-                            print("[Dungeon] atravessou a fase", stage.Name)
-                            doorTry, noEnemySince = nil, nil
-                        elseif os.clock() - doorTry.arrivedAt > DOOR_WAIT then
+                        if os.clock() - doorTry.arrivedAt > DOOR_WAIT then
                             print("[Dungeon] porta nao abriu, procurando inimigos de novo")
                             doorTry, noEnemySince = nil, nil
                         end
@@ -2459,6 +2496,146 @@ do
             else
                 target, noEnemySince, doorTry = nil, nil, nil
             end
+        end
+    end)
+end
+
+-- ===== AUTO CHEST =====
+-- Pega os baus Map.Dressrosa[x].Chest1/2/3, sempre o mais proximo. Bau tocado que continua
+-- no mapa (pego mas parece nao pego) e ignorado por IGNORE_TIME.
+-- Prioridade: Fabrica > Dungeon > Chest > Pumpkin > osso.
+do
+    local CHEST_FLY      = 300
+    local TOUCH_RANGE    = 8
+    local DWELL          = 0.5
+    local IGNORE_TIME    = 300
+    local TRAVEL_TIMEOUT = 15
+    local RESCAN         = 2
+
+    local list, lastScan = {}, 0
+    local ignored = setmetatable({}, { __mode = "k" })
+
+    local function IsChestName(n) return n:match("^Chest%d+$") ~= nil end
+    local function IsChestInst(i) return i:IsA("BasePart") or i:IsA("Model") end
+
+    local function Scan()
+        local map = WS:FindFirstChild("Map")
+        local dr = map and map:FindFirstChild("Dressrosa")
+        if not dr then table.clear(list) return end
+        local out, seen = {}, {}
+        local function add(c)
+            if not seen[c] and IsChestInst(c) then seen[c] = true table.insert(out, c) end
+        end
+        for _, c in ipairs(dr:GetChildren()) do
+            if IsChestName(c.Name) then
+                add(c)
+            else
+                for _, g in ipairs(c:GetChildren()) do
+                    if IsChestName(g.Name) then add(g) end
+                end
+            end
+        end
+        list = out
+    end
+
+    local function Nearest(origin)
+        local best, bd
+        local now = os.clock()
+        for i = #list, 1, -1 do
+            local c = list[i]
+            if not c.Parent then
+                table.remove(list, i)
+            elseif not (ignored[c] and ignored[c] > now) then
+                local p = InstPos(c)
+                if p then
+                    local d = (p - origin).Magnitude
+                    if not bd or d < bd then best, bd = c, d end
+                end
+            end
+        end
+        return best
+    end
+
+    local function TouchChest(c, root)
+        if firetouchinterest then
+            local n = 0
+            local parts = c:IsA("BasePart") and { c } or c:GetDescendants()
+            for _, p in ipairs(parts) do
+                if p:IsA("BasePart") then
+                    pcall(function() firetouchinterest(root, p, 0) firetouchinterest(root, p, 1) end)
+                    n += 1
+                    if n >= 10 then break end
+                end
+            end
+        end
+        if fireproximityprompt then
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then pcall(fireproximityprompt, d) end
+            end
+        end
+    end
+
+    task.spawn(function()
+        local cur, dwell, selAt = nil, 0, 0
+        while Alive() do
+            local dt = Run.Heartbeat:Wait()
+            local want = FarmFlags.Chest and not HW.factory and not HW.dungeon
+                and not StartSeaEvent and not anyTrue(MirageFlags) and not RaceBusy()
+                and not WantRaidDone()
+            local active = false
+            if want then
+                local ok, err = pcall(function()
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root or hum.Health <= 0 then return end
+                    if hum.SeatPart then JumpOffBoat(hum) return end
+
+                    if os.clock() - lastScan > RESCAN then
+                        lastScan = os.clock()
+                        Scan()
+                    end
+
+                    if cur and (not cur.Parent or (ignored[cur] and ignored[cur] > os.clock())) then
+                        cur, dwell = nil, 0
+                    end
+                    if not cur then
+                        cur = Nearest(root.Position)
+                        dwell, selAt = 0, os.clock()
+                    end
+                    if not cur then return end
+
+                    local pos = InstPos(cur)
+                    if not pos then
+                        ignored[cur] = os.clock() + IGNORE_TIME
+                        cur = nil
+                        return
+                    end
+
+                    active = true
+                    FlyTo(pos + Vector3.new(0, 2, 0), dt, CHEST_FLY)
+
+                    if (root.Position - pos).Magnitude <= TOUCH_RANGE then
+                        dwell += dt
+                        TouchChest(cur, root)
+                        if dwell >= DWELL then
+                            -- se o bau sumiu, sai da lista sozinho; se continua la, fica ignorado
+                            ignored[cur] = os.clock() + IGNORE_TIME
+                            cur, dwell = nil, 0
+                        end
+                    else
+                        dwell = 0
+                        if os.clock() - selAt > TRAVEL_TIMEOUT then
+                            ignored[cur] = os.clock() + 60
+                            print("[Chest] nao consegui chegar, ignorando:", cur:GetFullName())
+                            cur = nil
+                        end
+                    end
+                end)
+                if not ok then warn("[SpectralHub] erro no Auto Chest:", err) end
+            end
+            HW.chest = active
+            if not active then cur, dwell = nil, 0 end
         end
     end)
 end
