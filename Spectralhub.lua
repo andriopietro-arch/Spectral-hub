@@ -1,24 +1,16 @@
 --[[
-    SpectralHub v8.1
-    - Auto Dungeon (aba Auto Farm): mata todos os NPCs vivos num raio de 150 studs (ate 30 por golpe),
-      voa ate o mais proximo e, quando a area limpa, vai para workspace.Map.Dungeon[fase].ExitTeleporter.Root.
-      Ignora "Blank Buddy" e "Core". So atua quando voce esta a ate 1500 studs de uma porta da dungeon.
-      A fase atual e a porta mais proxima ainda nao usada; ao atravessar, marca a porta e passa
-      para a proxima.
-    - Auto Chest (aba Auto Farm): pega os baus Map.Dressrosa[x].ChestN, sempre o mais proximo.
-      Bau tocado que continua no mapa (pego mas parece nao pego) e ignorado por 5 min.
+    SpectralHub v8.2  (PC + Celular)
+    - Botao flutuante "SH" para abrir/fechar o menu (celular). No PC a tecla K continua valendo.
+    - Auto Dungeon: mata todos os NPCs vivos num raio de 150 studs (ate 30 por golpe), voa ate o mais
+      proximo e, quando a area limpa, vai para workspace.Map.Dungeon[fase].ExitTeleporter.Root.
+      Ignora "Blank Buddy" e "Core". So atua a ate 1500 studs de uma porta da dungeon.
+    - Auto Chest: pega os baus Map.Dressrosa[x].ChestN SPAWNADOS (visiveis), sempre o mais proximo.
     - Prioridade: Fabrica > Dungeon > Chest > Pumpkin > osso.
-    - Auto Fabrica (aba Auto Farm): quando chega "THE FACTORY HAS BEEN BREACHED", voa ate
-      workspace.Enemies.Core.HumanoidRootPart e equipa a espada. Termina por mensagem de fim,
-      Core sumir/morrer ou 6 min.
-    - FlyTo detecta TP que nao valeu (voce fica longe do ponto logo depois): desliga o TP por 15s e voa
-    - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia)
-    - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
-      Jack o' Lantern tem prioridade
-    - Em qualquer voo: voa normal e, quando faltarem 750 studs ou menos para o destino, teleporta
-    - Auto farm osso / treino: ao ligar vao primeiro para o ponto de farm (-9517, 142, 5543)
-    - Raid: nao puxa/trava os NPCs
-    - Iniciar raid: puxa Map["Boat Castle"].MapTeleportA.Hitbox para o personagem antes de clicar no botao
+    - Auto Fabrica: "THE FACTORY HAS BEEN BREACHED" -> voa ate Enemies.Core.
+    - FlyTo detecta TP que nao valeu e voa por 15s
+    - ESP fruta / player e Stats do servidor
+    - Auto Pumpkin Hunt (Jack o' Lantern com prioridade)
+    - Em qualquer voo: voa normal e, a 750 studs ou menos do destino, teleporta
 ]]
 
 pcall(function() (getgenv and getgenv() or _G).SpectralHubLoaded = game.JobId end)
@@ -32,7 +24,7 @@ local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local WS = game:GetService("Workspace")
 local Run = game:GetService("RunService")
-local VIM = game:GetService("VirtualInputManager")
+local VIM = select(2, pcall(game.GetService, game, "VirtualInputManager"))
 local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 
@@ -54,7 +46,9 @@ pcall(function()
     pcall(function() if gethui then table.insert(roots, gethui()) end end)
     for _, root in ipairs(roots) do
         for _, g in ipairs(root:GetChildren()) do
-            if g.Name == "Rayfield" or g.Name == "Rayfield-Old" then pcall(function() g:Destroy() end) end
+            if g.Name == "Rayfield" or g.Name == "Rayfield-Old" or g.Name == "SpectralHubButton" then
+                pcall(function() g:Destroy() end)
+            end
         end
     end
 end)
@@ -75,7 +69,8 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v8.1",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v8.2",
+    ToggleUIKeybind = "K",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -134,6 +129,8 @@ local HW = { active = false, factory = false, dungeon = false, chest = false }
 local AutoFlags = { Team=false, Buso=false }
 local FarmMode = "Osso"
 local FarmUI = {}
+-- botao flutuante: ligado por padrao so em dispositivo com toque (celular/tablet)
+FarmUI.Float = game:GetService("UserInputService").TouchEnabled
 local TrainUI = {}
 local CHIP_NAME = "Ice"
 local ClearESP
@@ -175,6 +172,7 @@ local function SaveSettings()
             Tool = SelectedToolLabel,
             WaterWalk = WaterWalk,
             NoNotify = NotifyOff,
+            FloatBtn = FarmUI.Float,
             SelectedShark = SelectedShark,
             SelectedTerror = SelectedTerror,
             SelectedBoat = SelectedBoat,
@@ -209,6 +207,7 @@ pcall(function()
         if type(d.Tool) == "string" and TOOL_MAP[d.Tool] then SelectedToolLabel = d.Tool end
         if type(d.WaterWalk) == "boolean" then WaterWalk = d.WaterWalk end
         if type(d.NoNotify) == "boolean" then NotifyOff = d.NoNotify end
+        if type(d.FloatBtn) == "boolean" then FarmUI.Float = d.FloatBtn end
         if type(d.SelectedShark) == "boolean" then SelectedShark = d.SelectedShark end
         if type(d.SelectedTerror) == "boolean" then SelectedTerror = d.SelectedTerror end
         if type(d.StartSeaEvent) == "boolean" then StartSeaEvent = d.StartSeaEvent end
@@ -478,6 +477,11 @@ StatsUI.Fruit = TabStats:CreateLabel("Fruta spawnada: \u{1F534}")
 StatsUI.Mirage = TabStats:CreateLabel("Ilha da miragem: \u{1F534}")
 StatsUI.Moon = TabStats:CreateLabel("Luas at\u{E9} a lua cheia: ...")
 
+TabCfg:CreateSection("Interface")
+TabCfg:CreateToggle({
+    Name = "Bot\u{E3}o flutuante SH (abrir/fechar menu)", CurrentValue = FarmUI.Float,
+    Callback = function(v) FarmUI.Float = v end,
+})
 TabCfg:CreateSection("Combate")
 TabCfg:CreateToggle({
     Name = "Fast Attack / Kill Aura", CurrentValue = FastAttackUser,
@@ -693,10 +697,13 @@ local function JumpOffBoat(hum)
     if os.clock() - lastJump < 0.4 then return end
     lastJump = os.clock()
     pcall(function() hum.Sit = false end)
+    pcall(function() hum.Jump = true end)
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
     pcall(function()
         VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.delay(0.1, function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+        task.delay(0.1, function()
+            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+        end)
     end)
 end
 
@@ -1695,6 +1702,123 @@ end)
 
 end
 
+-- ===== BOTAO FLUTUANTE (abrir/fechar menu - celular e PC) =====
+do
+    local UIS = game:GetService("UserInputService")
+    local gui, conn
+    local fallbackVisible = true
+
+    local function RayVisible()
+        local ok, v = pcall(function() return Rayfield:IsVisible() end)
+        if ok and type(v) == "boolean" then return v end
+        return fallbackVisible
+    end
+
+    local function ToggleMenu()
+        local want = not RayVisible()
+        local ok = pcall(function() Rayfield:SetVisibility(want) end)
+        if not ok then
+            -- versao antiga do Rayfield: simula a tecla K
+            pcall(function()
+                VIM:SendKeyEvent(true, Enum.KeyCode.K, false, game)
+                task.delay(0.05, function()
+                    pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.K, false, game) end)
+                end)
+            end)
+        end
+        fallbackVisible = want
+    end
+
+    local function Build()
+        local g = Instance.new("ScreenGui")
+        g.Name = "SpectralHubButton"
+        g.ResetOnSpawn = false
+        g.DisplayOrder = 999
+        g.IgnoreGuiInset = true
+        pcall(function() g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
+
+        local b = Instance.new("TextButton")
+        b.Name = "Toggle"
+        b.Size = UDim2.fromOffset(48, 48)
+        b.Position = UDim2.new(0, 14, 0.5, -24)
+        b.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+        b.BackgroundTransparency = 0.1
+        b.AutoButtonColor = true
+        b.Text = "SH"
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 17
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.Parent = g
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(1, 0)
+        c.Parent = b
+        local s = Instance.new("UIStroke")
+        s.Color = Color3.fromRGB(120, 90, 255)
+        s.Thickness = 2
+        s.Parent = b
+
+        local dragging, moved, dragStart, btnStart = false, false, nil, nil
+        b.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch
+                or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging, moved = true, false
+                dragStart, btnStart = input.Position, b.Position
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                        if not moved then pcall(ToggleMenu) end
+                    end
+                end)
+            end
+        end)
+        conn = UIS.InputChanged:Connect(function(input)
+            if not dragging then return end
+            if input.UserInputType == Enum.UserInputType.Touch
+                or input.UserInputType == Enum.UserInputType.MouseMovement then
+                local delta = input.Position - dragStart
+                if delta.Magnitude > 8 then moved = true end
+                if moved then
+                    b.Position = UDim2.new(btnStart.X.Scale, btnStart.X.Offset + delta.X,
+                        btnStart.Y.Scale, btnStart.Y.Offset + delta.Y)
+                end
+            end
+        end)
+
+        local placed = false
+        pcall(function()
+            if gethui then g.Parent = gethui() placed = true end
+        end)
+        if not placed then
+            placed = pcall(function() g.Parent = game:GetService("CoreGui") end)
+        end
+        if not placed or not g.Parent then
+            g.Parent = player:WaitForChild("PlayerGui")
+        end
+        return g
+    end
+
+    local function Destroy()
+        if conn then conn:Disconnect() conn = nil end
+        if gui then pcall(function() gui:Destroy() end) gui = nil end
+    end
+
+    task.spawn(function()
+        while Alive() do
+            if FarmUI.Float then
+                if not gui or not gui.Parent then
+                    Destroy()
+                    local ok, res = pcall(Build)
+                    if ok then gui = res else warn("[SpectralHub] erro no botao flutuante:", res) end
+                end
+            elseif gui then
+                Destroy()
+            end
+            task.wait(0.5)
+        end
+        Destroy()
+    end)
+end
+
 -- ===== ESP + STATS DO SERVIDOR =====
 do
     local TAG = "SpectralESP"
@@ -2184,8 +2308,6 @@ do
 end
 
 -- ===== AUTO FABRICA =====
--- Mensagem de invasao -> voa ate workspace.Enemies.Core.HumanoidRootPart e equipa a espada.
--- Termina quando o Core some/morre, quando chega a mensagem de fim, ou apos MAX_TIME.
 do
     local START_TEXT = "FACTORY HAS BEEN BREACHED"
     local END_WORDS = { "DESTROYED", "NEUTRALIZED", "SECURED", "SHUT DOWN", "SHUTDOWN", "DEACTIVATED", "COMPLETE", "DEFEATED" }
@@ -2279,16 +2401,11 @@ do
 end
 
 -- ===== AUTO DUNGEON =====
--- Mata todos os NPCs vivos num raio de HIT_RADIUS (ate 30 por golpe) e voa ate o mais proximo.
--- Ignora Blank Buddy e Core. Quando a area fica limpa por NO_ENEMY_DELAY, vai para
--- Map.Dungeon[fase].ExitTeleporter.Root. A fase atual e a porta mais proxima ainda nao usada;
--- ao atravessar (mudar MOVED_DIST de posicao), marca a porta como feita e passa para a proxima.
--- So atua quando voce esta a ate ACTIVE_DIST de alguma porta da dungeon.
 do
     local DUNGEON_FLY    = 300
-    local ENEMY_RANGE    = 300   -- inimigos ate aqui impedem de ir para a porta
-    local HIT_RADIUS     = 150   -- raio em que todos os NPCs levam o golpe
-    local HIT_MAX        = 30    -- maximo de NPCs por golpe
+    local ENEMY_RANGE    = 300
+    local HIT_RADIUS     = 150
+    local HIT_MAX        = 30
     local HIT_INTERVAL   = 0.1
     local HOVER          = 9
     local NO_ENEMY_DELAY = 1.5
@@ -2374,7 +2491,7 @@ do
     local function CurrentStage(pos)
         local st, door, d = Scan(pos)
         if not door and next(doneDoors) then
-            doneDoors = {}               -- todas feitas: recomeca (nova run)
+            doneDoors = {}
             st, door, d = Scan(pos)
         end
         return st, door, d
@@ -2420,7 +2537,6 @@ do
                     if hum.SeatPart then JumpOffBoat(hum) return end
                     local pos = root.Position
 
-                    -- atravessou a porta? (checado antes de tudo, mesmo com inimigos por perto)
                     if doorTry and doorTry.arrivedAt
                         and (pos - doorTry.arrivePos).Magnitude > MOVED_DIST then
                         doneDoors[doorTry.door] = true
@@ -2433,7 +2549,6 @@ do
                         EquipSword()
                     end
 
-                    -- ataca todos os NPCs ao redor o tempo todo (inclusive voando)
                     if os.clock() - lastHit >= HIT_INTERVAL then
                         lastHit = os.clock()
                         DungeonAttack(pos)
@@ -2501,22 +2616,52 @@ do
 end
 
 -- ===== AUTO CHEST =====
--- Pega os baus Map.Dressrosa[x].Chest1/2/3, sempre o mais proximo. Bau tocado que continua
--- no mapa (pego mas parece nao pego) e ignorado por IGNORE_TIME.
+-- Pega os baus Map.Dressrosa[x].ChestN, sempre o mais proximo que esteja SPAWNADO (visivel).
+-- Bau tocado que continua visivel e ignorado; se ele sumir/esconder, a marca e limpa (respawn).
 -- Prioridade: Fabrica > Dungeon > Chest > Pumpkin > osso.
 do
+    local DEBUG          = true
     local CHEST_FLY      = 300
     local TOUCH_RANGE    = 8
     local DWELL          = 0.5
     local IGNORE_TIME    = 300
     local TRAVEL_TIMEOUT = 15
-    local RESCAN         = 2
+    local RESCAN         = 1
+    local VISIBLE_BELOW  = 0.95
 
     local list, lastScan = {}, 0
     local ignored = setmetatable({}, { __mode = "k" })
 
     local function IsChestName(n) return n:match("^Chest%d+$") ~= nil end
     local function IsChestInst(i) return i:IsA("BasePart") or i:IsA("Model") end
+
+    local function IsLive(c)
+        if not c.Parent then return false end
+        if c:IsA("BasePart") then return c.Transparency < VISIBLE_BELOW end
+        local n = 0
+        for _, d in ipairs(c:GetDescendants()) do
+            if d:IsA("BasePart") then
+                if d.Transparency < VISIBLE_BELOW then return true end
+                n += 1
+                if n >= 40 then break end
+            end
+        end
+        return false
+    end
+
+    local function Describe(c)
+        local vis, total = 0, 0
+        for _, d in ipairs(c:GetDescendants()) do
+            if d:IsA("BasePart") then
+                total += 1
+                if d.Transparency < VISIBLE_BELOW then vis += 1 end
+            end
+        end
+        if c:IsA("BasePart") then
+            total, vis = 1, (c.Transparency < VISIBLE_BELOW) and 1 or 0
+        end
+        return ("%s | partes visiveis %d/%d"):format(c:GetFullName(), vis, total)
+    end
 
     local function Scan()
         local map = WS:FindFirstChild("Map")
@@ -2545,6 +2690,8 @@ do
             local c = list[i]
             if not c.Parent then
                 table.remove(list, i)
+            elseif not IsLive(c) then
+                ignored[c] = nil
             elseif not (ignored[c] and ignored[c] > now) then
                 local p = InstPos(c)
                 if p then
@@ -2596,12 +2743,13 @@ do
                         Scan()
                     end
 
-                    if cur and (not cur.Parent or (ignored[cur] and ignored[cur] > os.clock())) then
+                    if cur and (not IsLive(cur) or (ignored[cur] and ignored[cur] > os.clock())) then
                         cur, dwell = nil, 0
                     end
                     if not cur then
                         cur = Nearest(root.Position)
                         dwell, selAt = 0, os.clock()
+                        if cur and DEBUG then print("[Chest] alvo:", Describe(cur)) end
                     end
                     if not cur then return end
 
@@ -2619,7 +2767,6 @@ do
                         dwell += dt
                         TouchChest(cur, root)
                         if dwell >= DWELL then
-                            -- se o bau sumiu, sai da lista sozinho; se continua la, fica ignorado
                             ignored[cur] = os.clock() + IGNORE_TIME
                             cur, dwell = nil, 0
                         end
