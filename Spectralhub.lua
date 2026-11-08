@@ -1,5 +1,8 @@
+
 --[[
-    SpectralHub v7.7
+    SpectralHub v7.8
+    - FlyTo: se o TP nao valeu (servidor te devolveu / voce nao esta onde devia),
+      voa normal por 15s em vez de teleportar, depois tenta o TP de novo
     - ESP fruta / ESP player e Stats do servidor (fruta, miragem, luas ate a cheia) restaurados
     - Auto Pumpkin Hunt (aba Auto Farm): so aboboras dentro de workspace.PumpkinHunt e visiveis;
       troca de abobora no mesmo frame em que ela some; ignora aboboras de enfeite;
@@ -67,7 +70,7 @@ G.SpectralHubUI = Rayfield
 print("[SpectralHub] 2 - Rayfield ok")
 
 local Window = Rayfield:CreateWindow({
-    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.7",
+    Name = "Spectral Hub", LoadingTitle = "Spectral Hub", LoadingSubtitle = "v7.8",
     ConfigurationSaving = { Enabled = false },
 })
 
@@ -680,14 +683,34 @@ local function JumpOffBoat(hum)
     end)
 end
 
+-- ===== FLYTO COM DETECCAO DE TP QUE NAO VALEU =====
+local TP_FAIL_DIST = 40      -- depois do TP, se estiver a mais que isso do ponto = TP falhou
+local TP_CHECK_TIME = 1      -- tempo (s) depois do TP em que a checagem vale
+local NO_TP_TIME = 15        -- tempo (s) voando normal depois de um TP que falhou
+local lastTp, noTpUntil = nil, 0
+
 local function MyRoot() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
 local function FlyTo(pos, dt, speed)
     local r = MyRoot() if not r then return end
+    local now = os.clock()
+
+    -- o ultimo TP valeu? se o servidor te devolveu / voce nao esta onde devia, voa em vez de teleportar
+    if lastTp then
+        if lastTp.root ~= r or now - lastTp.t > TP_CHECK_TIME then
+            lastTp = nil
+        elseif (r.Position - lastTp.pos).Magnitude > TP_FAIL_DIST then
+            noTpUntil = now + NO_TP_TIME
+            lastTp = nil
+            print("[SpectralHub] TP nao valeu, voando por " .. NO_TP_TIME .. "s")
+        end
+    end
+
     local off = pos - r.Position
     local d = off.Magnitude
-    if d > 1 and d <= TP_DISTANCE then
+    if d > 1 and d <= TP_DISTANCE and now >= noTpUntil then
         r.CFrame = CFrame.new(pos) * r.CFrame.Rotation
         r.AssemblyLinearVelocity = Vector3.zero
+        lastTp = { pos = pos, t = now, root = r }
         return
     end
     if d > 1 then
@@ -697,6 +720,7 @@ local function FlyTo(pos, dt, speed)
 end
 local function TeleportTo(pos)
     local r = MyRoot() if not r then return end
+    lastTp = nil
     r.CFrame = CFrame.new(pos) * r.CFrame.Rotation
     r.AssemblyLinearVelocity = Vector3.zero
 end
